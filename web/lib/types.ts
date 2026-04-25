@@ -35,6 +35,11 @@ export interface DocumentListResponse {
   items: DocumentListItem[];
 }
 
+export interface DocumentDeleteResponse {
+  id: string;
+  title: string;
+}
+
 export interface ChunkRead {
   id: string;
   fragment_id: string;

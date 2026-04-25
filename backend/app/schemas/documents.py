@@ -110,3 +110,8 @@ class FragmentRead(BaseModel):
     heading_path: list[str]
     page_number: int | None
     content: str
+
+
+class DocumentDeleteResponse(BaseModel):
+    id: str
+    title: str

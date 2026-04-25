@@ -21,10 +21,10 @@ export function DashboardPage() {
   }
 
   const metrics = [
-    { label: "Documents", value: data.summary?.document_count ?? 0 },
-    { label: "Chunks", value: data.summary?.chunk_count ?? 0 },
-    { label: "Answer Traces", value: data.summary?.trace_count ?? 0 },
-    { label: "Eval Runs", value: data.summary?.eval_run_count ?? 0 }
+    { label: "文档数", value: data.summary?.document_count ?? 0 },
+    { label: "切片数", value: data.summary?.chunk_count ?? 0 },
+    { label: "问答记录", value: data.summary?.trace_count ?? 0 },
+    { label: "评测运行", value: data.summary?.eval_run_count ?? 0 }
   ];
 
   return (
@@ -53,59 +53,37 @@ export function DashboardPage() {
       </div>
 
       <div className="grid">
-        <div className="stack">
-          <div className="card">
-            <h2>快捷入口</h2>
-            <div className="list">
-              <Link href="/documents" className="list-item link-card">
-                文档导入与详情
+        <div className="card scroll-card">
+          <h2>最新任务</h2>
+          <div className="list scroll-list">
+            {data.ingestionJobs.slice(0, 4).map((item) => (
+              <Link key={item.ingestion_job.id} href={`/tasks/ingestion/${item.ingestion_job.id}`} className="list-item link-card">
+                <strong>{item.document?.title ?? item.ingestion_job.source_uri}</strong>
+                <div className="tiny">
+                  导入任务 · 状态：{item.ingestion_job.status} · 重试次数：{item.ingestion_job.attempt_count}
+                </div>
               </Link>
-              <Link href="/chat" className="list-item link-card">
-                研究问答与流式输出
+            ))}
+            {data.evalRuns.slice(0, 4).map((item) => (
+              <Link key={item.id} href={`/tasks/evaluation/${item.id}`} className="list-item link-card">
+                <strong>{item.id}</strong>
+                <div className="tiny">
+                  评测任务 · 状态：{item.status} · 召回率：{formatMetric(item.summary.document_recall)}
+                </div>
               </Link>
-              <Link href="/tasks" className="list-item link-card">
-                导入任务与评测任务
-              </Link>
-              <Link href="/evaluation" className="list-item link-card">
-                评测运行与指标回看
-              </Link>
-            </div>
+            ))}
           </div>
         </div>
 
-        <div className="stack">
-          <div className="card">
-            <h2>最新任务</h2>
-            <div className="list">
-              {data.ingestionJobs.slice(0, 4).map((item) => (
-                <Link key={item.ingestion_job.id} href={`/tasks/ingestion/${item.ingestion_job.id}`} className="list-item link-card">
-                  <strong>{item.document?.title ?? item.ingestion_job.source_uri}</strong>
-                  <div className="tiny">
-                    import · status={item.ingestion_job.status} · attempt={item.ingestion_job.attempt_count}
-                  </div>
-                </Link>
-              ))}
-              {data.evalRuns.slice(0, 4).map((item) => (
-                <Link key={item.id} href={`/tasks/evaluation/${item.id}`} className="list-item link-card">
-                  <strong>{item.id}</strong>
-                  <div className="tiny">
-                    eval · status={item.status} · recall={formatMetric(item.summary.document_recall)}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-
-          <div className="card">
-            <h2>最近查询</h2>
-            <div className="list">
-              {data.traces.slice(0, 5).map((trace) => (
-                <Link key={trace.id} href="/history" className="list-item link-card">
-                  <strong>{trace.question}</strong>
-                  <div className="tiny">confidence {Math.round(trace.confidence * 100)}%</div>
-                </Link>
-              ))}
-            </div>
+        <div className="card scroll-card">
+          <h2>最近查询</h2>
+          <div className="list scroll-list">
+            {data.traces.slice(0, 5).map((trace) => (
+              <Link key={trace.id} href="/history" className="list-item link-card">
+                <strong>{trace.question}</strong>
+                <div className="tiny">置信度 {Math.round(trace.confidence * 100)}%</div>
+              </Link>
+            ))}
           </div>
         </div>
       </div>

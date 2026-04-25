@@ -32,7 +32,6 @@ export function DocumentDetailPage({ documentId }: { documentId: string }) {
     try {
       const result = await fetchJson<DocumentRead>(`/documents/${documentId}`);
       setDocument(result);
-      setStatus(`已载入文档“${result.title}”。`);
     } catch (error) {
       setStatus(getErrorMessage(error));
     }
@@ -60,57 +59,47 @@ export function DocumentDetailPage({ documentId }: { documentId: string }) {
       onCreateSpace={handleCreateSpace}
       status={status || data.bootStatus}
     >
-      <Link href="/documents" className="back-link">
-        返回文档列表
-      </Link>
-
       {document ? (
-        <div className="grid">
-          <div className="stack">
-            <div className="card">
-              <h2>{document.title}</h2>
-              <div className="tiny mono">{document.id}</div>
-              <div className="tiny mono">{document.source_uri}</div>
-              {document.storage_uri ? <div className="tiny mono">{document.storage_uri}</div> : null}
-              <div className="tiny">
-                {document.source_type} · {document.status} · chunks={document.chunks.length}
+        <div className="detail-page-stack">
+          <div className="card">
+            <Link href="/documents" className="back-link">
+              返回
+            </Link>
+            <div className="detail-hero">
+              <div>
+                <h2>{document.title}</h2>
+                <div className="tiny">文档详情与切片内容</div>
               </div>
+              <div className="detail-badge">{document.status}</div>
             </div>
-
-            <div className="card">
-              <h2>Chunks</h2>
-              <div className="list">
-                {document.chunks.map((chunk) => (
-                  <div className="list-item" key={chunk.id}>
-                    <strong>{chunk.section_title}</strong>
-                    <div className="tiny">
-                      fragment={chunk.fragment_id} · tokens={chunk.token_count}
-                    </div>
-                    <div>{chunk.content}</div>
-                    <div className="action-row">
-                      <button className="mini-button" type="button" onClick={() => viewFragment(chunk.fragment_id)}>
-                        查看片段
-                      </button>
-                    </div>
-                  </div>
-                ))}
+            <div className="detail-meta-grid">
+              <div className="preview-box">
+                <div className="tiny">文档 ID</div>
+                <div className="tiny mono">{document.id}</div>
+              </div>
+              <div className="preview-box">
+                <div className="tiny">来源类型</div>
+                <div>{document.source_type}</div>
+              </div>
+              <div className="preview-box">
+                <div className="tiny">切片数量</div>
+                <div>{document.chunks.length}</div>
               </div>
             </div>
           </div>
 
-          <div className="stack">
-            <div className="card">
-              <h2>片段预览</h2>
-              {fragment ? (
-                <div className="preview-box">
+          <div className="card detail-scroll-card">
+            <h2>切片列表</h2>
+            <div className="list detail-scroll-list">
+              {document.chunks.map((chunk) => (
+                <div className={`list-item ${fragment?.fragment_id === chunk.fragment_id ? "active" : ""}`} key={chunk.id}>
+                  <strong>{chunk.section_title}</strong>
                   <div className="tiny">
-                    {fragment.heading_path.join(" / ")} · fragment={fragment.fragment_id}
+                    片段 ID：{chunk.fragment_id} · 词元数：{chunk.token_count}
                   </div>
-                  <div style={{ marginTop: 10 }}>{fragment.content}</div>
+                  <div style={{ marginTop: 12 }}>{fragment?.fragment_id === chunk.fragment_id ? fragment.content : chunk.content}</div>
                 </div>
-              ) : (
-                <div className="tiny">点击任一 chunk 查看对应片段。</div>
-              )}
+              ))}
             </div>
           </div>
         </div>

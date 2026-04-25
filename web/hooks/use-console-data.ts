@@ -14,6 +14,8 @@ import type {
   SourceImportResponse
 } from "@/lib/types";
 
+const SELECTED_SPACE_STORAGE_KEY = "rag:selected-space-id";
+
 export function useConsoleData() {
   const [spaces, setSpaces] = useState<KnowledgeSpace[]>([]);
   const [selectedSpaceId, setSelectedSpaceId] = useState("");
@@ -31,7 +33,7 @@ export function useConsoleData() {
 
   useEffect(() => {
     if (!selectedSpaceId && spaces[0]?.id) {
-      setSelectedSpaceId(spaces[0].id);
+      updateSelectedSpaceId(spaces[0].id);
     }
   }, [spaces, selectedSpaceId]);
 
@@ -57,13 +59,37 @@ export function useConsoleData() {
     return () => window.clearTimeout(timer);
   }, [selectedSpaceId, ingestionJobs, evalRuns]);
 
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    const persistedSpaceId = window.localStorage.getItem(SELECTED_SPACE_STORAGE_KEY);
+    if (persistedSpaceId) {
+      setSelectedSpaceId(persistedSpaceId);
+    }
+  }, []);
+
+  function updateSelectedSpaceId(spaceId: string) {
+    setSelectedSpaceId(spaceId);
+    if (typeof window !== "undefined") {
+      if (spaceId) {
+        window.localStorage.setItem(SELECTED_SPACE_STORAGE_KEY, spaceId);
+      } else {
+        window.localStorage.removeItem(SELECTED_SPACE_STORAGE_KEY);
+      }
+    }
+  }
+
   async function refreshAll() {
     const loadedSpaces = await fetchJson<KnowledgeSpace[]>("/knowledge-spaces");
     setSpaces(loadedSpaces);
-    const defaultSpaceId = loadedSpaces[0]?.id ?? "";
-    if (defaultSpaceId) {
-      setSelectedSpaceId(defaultSpaceId);
-      await refreshCollections(defaultSpaceId);
+    const persistedSpaceId =
+      typeof window !== "undefined" ? window.localStorage.getItem(SELECTED_SPACE_STORAGE_KEY) ?? "" : "";
+    const nextSpaceId =
+      loadedSpaces.find((space) => space.id === persistedSpaceId)?.id ?? loadedSpaces[0]?.id ?? "";
+    if (nextSpaceId) {
+      updateSelectedSpaceId(nextSpaceId);
+      await refreshCollections(nextSpaceId);
     }
     setBootStatus("工作台已同步。");
   }
@@ -98,10 +124,24 @@ export function useConsoleData() {
     return created;
   }
 
+  async function deleteSpace(spaceId: string) {
+    const deleted = await fetchJson<KnowledgeSpace>(`/knowledge-spaces/${spaceId}`, {
+      method: "DELETE"
+    });
+    const remainingSpaces = spaces.filter((space) => space.id !== spaceId);
+    const nextSelectedSpaceId =
+      remainingSpaces.find((space) => space.id === selectedSpaceId)?.id ??
+      remainingSpaces[0]?.id ??
+      "";
+    updateSelectedSpaceId(nextSelectedSpaceId);
+    await refreshAll();
+    return deleted;
+  }
+
   return {
     spaces,
     selectedSpaceId,
-    setSelectedSpaceId,
+    setSelectedSpaceId: updateSelectedSpaceId,
     spaceName,
     setSpaceName,
     summary,
@@ -112,6 +152,7 @@ export function useConsoleData() {
     bootStatus,
     refreshAll,
     refreshCollections,
-    createSpace
+    createSpace,
+    deleteSpace
   };
 }

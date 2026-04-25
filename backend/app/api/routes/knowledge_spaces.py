@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
@@ -24,3 +24,16 @@ def create_knowledge_space(
 ) -> KnowledgeSpaceRead:
     return container.ingestion_service.create_knowledge_space(db, payload)
 
+
+@router.delete("/{knowledge_space_id}", response_model=KnowledgeSpaceRead)
+def delete_knowledge_space(
+    knowledge_space_id: str,
+    db: Session = Depends(get_db),
+    container: ServiceContainer = Depends(get_container),
+) -> KnowledgeSpaceRead:
+    try:
+        return container.ingestion_service.delete_knowledge_space(db, knowledge_space_id)
+    except ValueError as exc:
+        message = str(exc)
+        status_code = 404 if message == "Knowledge space not found." else 400
+        raise HTTPException(status_code=status_code, detail=message) from exc

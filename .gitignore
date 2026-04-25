@@ -34,3 +34,5 @@ htmlcov/
 backend/build/
 web/.next/
 web/node_modules/
+/data/
+/logs/

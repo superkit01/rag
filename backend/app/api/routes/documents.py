@@ -2,7 +2,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.db.session import get_db
-from app.schemas.documents import DocumentListItem, DocumentListResponse, DocumentRead, FragmentRead, ReindexResponse
+from app.schemas.documents import (
+    DocumentDeleteResponse,
+    DocumentListItem,
+    DocumentListResponse,
+    DocumentRead,
+    FragmentRead,
+    ReindexResponse,
+)
 from app.services.container import ServiceContainer, get_container
 
 router = APIRouter(prefix="/documents", tags=["documents"])
@@ -60,6 +67,21 @@ def get_fragment(
         page_number=chunk.page_number,
         content=chunk.content,
     )
+
+
+@router.delete("/{document_id}", response_model=DocumentDeleteResponse)
+def delete_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+    container: ServiceContainer = Depends(get_container),
+) -> DocumentDeleteResponse:
+    try:
+        deleted = container.ingestion_service.delete_document(db, document_id)
+        return DocumentDeleteResponse(id=deleted.id, title=deleted.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/{document_id}/reindex", response_model=ReindexResponse, status_code=202)

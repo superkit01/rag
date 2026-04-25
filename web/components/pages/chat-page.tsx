@@ -1,12 +1,23 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useState } from "react";
 
-import { ConsoleShell } from "@/components/console-shell";
 import { useConsoleData } from "@/hooks/use-console-data";
 import { fetchJson, streamAnswer } from "@/lib/api";
 import { getErrorMessage } from "@/lib/console";
 import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
+
+type ChatTurn = {
+  id: string;
+  question: string;
+  answer: string;
+  citations: Citation[];
+  sourceDocuments: SourceDocument[];
+  confidence?: number;
+  answerTraceId?: string;
+  isStreaming?: boolean;
+};
 
 export function ChatPage() {
   const data = useConsoleData();
@@ -19,18 +30,17 @@ export function ChatPage() {
   const [citations, setCitations] = useState<Citation[]>([]);
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
-
-  async function handleCreateSpace() {
-    try {
-      const created = await data.createSpace();
-      setStatus(`知识空间“${created.name}”已创建。`);
-    } catch (error) {
-      setStatus(getErrorMessage(error));
-    }
-  }
+  const [turns, setTurns] = useState<ChatTurn[]>([]);
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const currentQuestion = question.trim();
+    if (!currentQuestion) {
+      setStatus("请输入问题后再开始问答。");
+      return;
+    }
+
+    const turnId = `${Date.now()}`;
     try {
       setIsStreaming(true);
       setStreamingText("");
@@ -38,9 +48,21 @@ export function ChatPage() {
       setCitations([]);
       setSourceDocuments([]);
       setFeedbackStatus("");
+      setTurns((current) => [
+        ...current,
+        {
+          id: turnId,
+          question: currentQuestion,
+          answer: "",
+          citations: [],
+          sourceDocuments: [],
+          isStreaming: true
+        }
+      ]);
+
       await streamAnswer<AnswerResponse>(
         {
-          question,
+          question: currentQuestion,
           knowledge_space_id: data.selectedSpaceId || undefined,
           knowledge_space_name: data.selectedSpaceId ? undefined : data.spaceName,
           document_ids: selectedDocumentIds,
@@ -50,9 +72,26 @@ export function ChatPage() {
           onMeta(meta) {
             setCitations(meta.citations);
             setSourceDocuments(meta.source_documents);
+            setTurns((current) =>
+              current.map((turn) =>
+                turn.id === turnId
+                  ? {
+                      ...turn,
+                      citations: meta.citations,
+                      sourceDocuments: meta.source_documents
+                    }
+                  : turn
+              )
+            );
           },
           onDelta(delta) {
-            setStreamingText((current) => current + delta);
+            setStreamingText((currentText) => {
+              const nextText = currentText + delta;
+              setTurns((current) =>
+                current.map((turn) => (turn.id === turnId ? { ...turn, answer: nextText } : turn))
+              );
+              return nextText;
+            });
           },
           onDone(result) {
             setAnswer(result);
@@ -60,12 +99,31 @@ export function ChatPage() {
             setCitations(result.citations);
             setSourceDocuments(result.source_documents);
             setStatus(`问答已完成，当前置信度 ${Math.round(result.confidence * 100)}%。`);
+            setTurns((current) =>
+              current.map((turn) =>
+                turn.id === turnId
+                  ? {
+                      ...turn,
+                      answer: result.answer,
+                      citations: result.citations,
+                      sourceDocuments: result.source_documents,
+                      confidence: result.confidence,
+                      answerTraceId: result.answer_trace_id,
+                      isStreaming: false
+                    }
+                  : turn
+              )
+            );
           }
         }
       );
       await data.refreshCollections(data.selectedSpaceId || data.spaces[0]?.id || "");
+      setQuestion("");
     } catch (error) {
       setStatus(getErrorMessage(error));
+      setTurns((current) =>
+        current.map((turn) => (turn.id === turnId ? { ...turn, answer: getErrorMessage(error), isStreaming: false } : turn))
+      );
     } finally {
       setIsStreaming(false);
     }
@@ -99,99 +157,197 @@ export function ChatPage() {
     );
   }
 
+  function fillPrompt(nextQuestion: string) {
+    setQuestion(nextQuestion);
+  }
+
+  const suggestions = [
+    "总结当前知识空间里与发布审批相关的硬性前置条件。",
+    "按文档出处整理核心数据变更的风险控制要求。",
+    "如果证据不足，请明确指出缺失了哪些制度或流程文档。",
+    "对比最近导入的文档里，哪些内容最适合做上线前检查清单？"
+  ];
+
   return (
-    <ConsoleShell
-      activeHref="/chat"
-      title="Streaming Research Chat"
-      description="聊天页独立出来，并通过服务端流事件边生成边展示答案，不再等整段 JSON 一次性返回。"
-      spaces={data.spaces}
-      selectedSpaceId={data.selectedSpaceId}
-      onSelectedSpaceIdChange={data.setSelectedSpaceId}
-      spaceName={data.spaceName}
-      onSpaceNameChange={data.setSpaceName}
-      onCreateSpace={handleCreateSpace}
-      status={status || data.bootStatus}
-    >
-      <div className="grid">
-        <div className="stack">
-          <div className="card">
-            <h2>研究问答</h2>
-            <form onSubmit={handleAsk}>
-              <div className="field">
-                <label>问题</label>
-                <textarea className="textarea" style={{ minHeight: 120 }} value={question} onChange={(event) => setQuestion(event.target.value)} />
+    <main className="chat-layout">
+      <aside className="chat-sidebar">
+        <div className="chat-sidebar-top">
+          <div className="chat-logo">
+            <span className="chat-logo-mark">AI</span>
+            <div>
+              <strong>知识库对话</strong>
+              <div className="tiny">独立对话页</div>
+            </div>
+          </div>
+          <Link href="/dashboard" className="mini-button link-card">
+            控制台
+          </Link>
+        </div>
+
+        <section className="chat-sidebar-card">
+          <h3>知识空间</h3>
+          <div className="field" style={{ marginTop: 0 }}>
+            <label>当前命名空间</label>
+            <select className="select" value={data.selectedSpaceId} onChange={(event) => data.setSelectedSpaceId(event.target.value)}>
+              <option value="">自动选择默认空间</option>
+              {data.spaces.map((space) => (
+                <option key={space.id} value={space.id}>
+                  {space.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <p style={{ marginTop: 12 }}>这里可以直接切换命名空间，并配合文档过滤缩小问答范围。</p>
+        </section>
+
+        <section className="chat-sidebar-card">
+          <h3>最近对话</h3>
+          <div className="chat-history">
+            {turns.length ? (
+              turns
+                .slice()
+                .reverse()
+                .map((turn) => (
+                  <div key={turn.id} className="chat-history-item">
+                    <strong>{turn.question}</strong>
+                    <div className="tiny">{turn.isStreaming ? "正在生成回答..." : `引用 ${turn.citations.length} 条`}</div>
+                  </div>
+                ))
+            ) : (
+              <div className="tiny">还没有开始会话，先试一个研究问题。</div>
+            )}
+          </div>
+        </section>
+
+        <section className="chat-sidebar-card">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ marginBottom: 0 }}>文档过滤</h3>
+            <button className="mini-button" type="button" onClick={() => setSelectedDocumentIds([])} disabled={isStreaming}>
+              清空
+            </button>
+          </div>
+          <div className="chat-doc-list" style={{ marginTop: 12 }}>
+            {data.documents.map((document) => (
+              <button
+                key={document.id}
+                className={`chat-doc-button ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
+                type="button"
+                onClick={() => toggleDocumentSelection(document.id)}
+              >
+                <strong>{document.title}</strong>
+                <div className="tiny">
+                  {document.source_type} · {document.status}
+                </div>
+              </button>
+            ))}
+          </div>
+        </section>
+      </aside>
+
+      <section className="chat-main">
+        <header className="chat-main-header">
+          <div>
+            <h1>Chat with your knowledge base</h1>
+            <p>独立于后台管理入口的研究对话页，保留流式回答、引用证据和知识空间上下文。</p>
+          </div>
+          <div className="chat-header-actions">
+            {status ? <div className="chat-sidebar-card" style={{ padding: "12px 14px" }}>{status}</div> : null}
+            {feedbackStatus ? <div className="chat-sidebar-card" style={{ padding: "12px 14px" }}>{feedbackStatus}</div> : null}
+          </div>
+        </header>
+
+        <section className="chat-content">
+          <div className="chat-thread">
+            {!turns.length ? (
+              <section className="chat-empty">
+                <h2>今天想先研究什么？</h2>
+                <p>可以直接提问，也可以用下面的提示词快速开始。系统会按当前知识空间与文档过滤条件给出带引用的回答。</p>
+                <div className="chat-suggestions">
+                  {suggestions.map((item) => (
+                    <button key={item} type="button" className="chat-suggestion" onClick={() => fillPrompt(item)}>
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+
+            {turns.map((turn) => (
+              <div key={turn.id} className="chat-message-group">
+                <div className="chat-message user">
+                  <div className="chat-bubble">{turn.question}</div>
+                </div>
+
+                <div className="chat-message assistant">
+                  <div className="chat-bubble">
+                    {turn.answer || "正在组织答案..."}
+                    {turn.isStreaming ? <span className="stream-cursor">▋</span> : null}
+                  </div>
+                </div>
+
+                {(turn.citations.length > 0 || turn.sourceDocuments.length > 0 || turn.answerTraceId) && (
+                  <div className="chat-message assistant">
+                    <div className="chat-meta-card">
+                      {turn.answerTraceId ? <div className="tiny mono">问答追踪 ID: {turn.answerTraceId}</div> : null}
+                      {typeof turn.confidence === "number" ? (
+                        <div className="tiny" style={{ marginTop: 6 }}>
+                          当前置信度 {Math.round(turn.confidence * 100)}%
+                        </div>
+                      ) : null}
+                      {turn.sourceDocuments.length ? (
+                        <div className="chip-row" style={{ marginTop: 12 }}>
+                          {turn.sourceDocuments.map((source) => (
+                            <div className="chip" key={source.document_id}>
+                              {source.title}
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                      {turn.citations.length ? (
+                        <div className="chat-citations">
+                          {turn.citations.map((citation) => (
+                            <div className="chat-citation" key={citation.citation_id}>
+                              <strong>
+                                {citation.document_title} · {citation.section_title}
+                              </strong>
+                              <div>{citation.quote}</div>
+                              <div className="tiny">
+                                fragment={citation.fragment_id} · score={citation.score.toFixed(3)}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                )}
               </div>
-              <div className="row" style={{ marginTop: 16 }}>
-                <button className="button" type="submit" disabled={isStreaming}>
-                  {isStreaming ? "正在流式生成..." : "开始问答"}
+            ))}
+
+            {(streamingText || citations.length || sourceDocuments.length) && answer ? (
+              <form onSubmit={handleFeedback}>
+                <button className="button secondary" type="submit">
+                  记录正向反馈
                 </button>
-                <button className="button ghost" type="button" onClick={() => setSelectedDocumentIds([])} disabled={isStreaming}>
-                  清空文档过滤
+              </form>
+            ) : null}
+          </div>
+
+          <div className="chat-composer-wrap">
+            <form className="chat-composer" onSubmit={handleAsk}>
+              <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="给知识库发一条消息，或要求它基于引用整理结论..." />
+              <div className="chat-composer-actions">
+                <div className="chat-composer-meta">
+                  {selectedDocumentIds.length ? `已限定 ${selectedDocumentIds.length} 份文档` : "当前使用整个命名空间"}
+                </div>
+                <button className="button" type="submit" disabled={isStreaming}>
+                  {isStreaming ? "生成中..." : "发送"}
                 </button>
               </div>
             </form>
-
-            {streamingText ? (
-              <div className="answer-block">
-                {answer ? <div className="tiny mono">Answer Trace ID: {answer.answer_trace_id}</div> : null}
-                <div className="answer-copy">
-                  {streamingText}
-                  {isStreaming ? <span className="stream-cursor">▋</span> : null}
-                </div>
-                <div className="chip-row">
-                  {sourceDocuments.map((source) => (
-                    <div className="chip" key={source.document_id}>
-                      {source.title}
-                    </div>
-                  ))}
-                </div>
-                <div className="list">
-                  {citations.map((citation) => (
-                    <div className="list-item" key={citation.citation_id}>
-                      <strong>
-                        {citation.document_title} · {citation.section_title}
-                      </strong>
-                      <div>{citation.quote}</div>
-                      <div className="tiny">
-                        fragment={citation.fragment_id} · score={citation.score.toFixed(3)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-                {answer ? (
-                  <form onSubmit={handleFeedback}>
-                    <button className="button secondary" type="submit">
-                      记录正向反馈
-                    </button>
-                    {feedbackStatus ? <div className="status">{feedbackStatus}</div> : null}
-                  </form>
-                ) : null}
-              </div>
-            ) : null}
           </div>
-        </div>
-
-        <div className="stack">
-          <div className="card">
-            <h2>文档过滤</h2>
-            <div className="list">
-              {data.documents.map((document) => (
-                <button
-                  key={document.id}
-                  className={`list-item selector-card ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
-                  type="button"
-                  onClick={() => toggleDocumentSelection(document.id)}
-                >
-                  <strong>{document.title}</strong>
-                  <div className="tiny">
-                    {document.source_type} · {document.status}
-                  </div>
-                </button>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
-    </ConsoleShell>
+        </section>
+      </section>
+    </main>
   );
 }

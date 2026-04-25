@@ -15,6 +15,7 @@ export function EvaluationPage() {
   const [evalName, setEvalName] = useState("变更控制验证");
   const [evalQuestion, setEvalQuestion] = useState("核心数据上线需要满足什么要求？");
   const [expectedDocumentId, setExpectedDocumentId] = useState("");
+  const [isEvalModalOpen, setIsEvalModalOpen] = useState(false);
 
   async function handleCreateSpace() {
     try {
@@ -44,6 +45,7 @@ export function EvaluationPage() {
         })
       });
       setStatus(describeEvalSubmission(result));
+      setIsEvalModalOpen(false);
       await data.refreshCollections(data.selectedSpaceId || data.spaces[0]?.id || "");
     } catch (error) {
       setStatus(getErrorMessage(error));
@@ -63,10 +65,52 @@ export function EvaluationPage() {
       onCreateSpace={handleCreateSpace}
       status={status || data.bootStatus}
     >
-      <div className="grid">
-        <div className="stack">
-          <div className="card">
-            <h2>运行评测</h2>
+      <div className="page-toolbar">
+        <div className="page-toolbar-main">
+          <h2>评测管理</h2>
+          <div className="page-toolbar-meta">查看评测记录，并通过弹窗提交新的评测任务。</div>
+        </div>
+        <div className="row" style={{ alignItems: "center" }}>
+          <button className="button" type="button" onClick={() => setIsEvalModalOpen(true)}>
+            运行评测
+          </button>
+        </div>
+      </div>
+
+      <div className="card scroll-card">
+        <div className="card-header">
+          <h2>评测记录</h2>
+          <div className="count-badge">{data.evalRuns.length} 条</div>
+        </div>
+        <div className="list scroll-list">
+          {data.evalRuns.map((run) => (
+            <Link key={run.id} href={`/tasks/evaluation/${run.id}`} className="list-item link-card">
+              <strong>{run.id}</strong>
+              <div className="tiny">
+                状态：{run.status} · 召回率：{formatMetric(run.summary.document_recall)} · 引用准确率：{formatMetric(run.summary.citation_precision)}
+              </div>
+            </Link>
+          ))}
+        </div>
+      </div>
+
+      {isEvalModalOpen ? (
+        <div className="modal-overlay" role="presentation" onClick={() => setIsEvalModalOpen(false)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="run-eval-title"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+              <h2 id="run-eval-title" style={{ marginBottom: 0 }}>
+                运行评测
+              </h2>
+              <button className="mini-button" type="button" onClick={() => setIsEvalModalOpen(false)}>
+                关闭
+              </button>
+            </div>
             <form onSubmit={handleRunEval}>
               <div className="field">
                 <label>评测名称</label>
@@ -87,29 +131,18 @@ export function EvaluationPage() {
                   ))}
                 </select>
               </div>
-              <button className="button" type="submit">
-                提交评测
-              </button>
+              <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
+                <button className="button secondary" type="button" onClick={() => setIsEvalModalOpen(false)}>
+                  取消
+                </button>
+                <button className="button" type="submit">
+                  提交评测
+                </button>
+              </div>
             </form>
           </div>
         </div>
-
-        <div className="stack">
-          <div className="card">
-            <h2>评测记录</h2>
-            <div className="list">
-              {data.evalRuns.map((run) => (
-                <Link key={run.id} href={`/tasks/evaluation/${run.id}`} className="list-item link-card">
-                  <strong>{run.id}</strong>
-                  <div className="tiny">
-                    status={run.status} · recall={formatMetric(run.summary.document_recall)} · precision={formatMetric(run.summary.citation_precision)}
-                  </div>
-                </Link>
-              ))}
-            </div>
-          </div>
-        </div>
-      </div>
+      ) : null}
     </ConsoleShell>
   );
 }

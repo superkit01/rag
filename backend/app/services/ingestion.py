@@ -6,7 +6,7 @@ import hashlib
 from sqlalchemy import func
 from sqlalchemy.orm import Session, selectinload
 
-from app.models.entities import Chunk, Document, IngestionJob, KnowledgeSpace
+from app.models.entities import AnswerTrace, Chunk, Document, EvalCase, EvalRun, IngestionJob, KnowledgeSpace
 from app.schemas.common import KnowledgeSpaceCreate
 from app.schemas.documents import SourceImportRequest
 from app.services.chunking import HierarchicalChunker
@@ -71,6 +71,30 @@ class IngestionService:
         db.refresh(knowledge_space)
         return knowledge_space
 
+    def delete_knowledge_space(self, db: Session, knowledge_space_id: str) -> KnowledgeSpace:
+        knowledge_space = db.get(KnowledgeSpace, knowledge_space_id)
+        if knowledge_space is None:
+            raise ValueError("Knowledge space not found.")
+
+        total_spaces = db.query(func.count(KnowledgeSpace.id)).scalar() or 0
+        if total_spaces <= 1:
+            raise ValueError("至少保留一个知识空间，当前空间不能删除。")
+
+        related_counts = {
+            "文档": db.query(func.count(Document.id)).filter(Document.knowledge_space_id == knowledge_space_id).scalar() or 0,
+            "导入任务": db.query(func.count(IngestionJob.id)).filter(IngestionJob.knowledge_space_id == knowledge_space_id).scalar() or 0,
+            "问答记录": db.query(func.count(AnswerTrace.id)).filter(AnswerTrace.knowledge_space_id == knowledge_space_id).scalar() or 0,
+            "评测用例": db.query(func.count(EvalCase.id)).filter(EvalCase.knowledge_space_id == knowledge_space_id).scalar() or 0,
+            "评测运行": db.query(func.count(EvalRun.id)).filter(EvalRun.knowledge_space_id == knowledge_space_id).scalar() or 0,
+        }
+        occupied_items = [f"{label}{count}条" for label, count in related_counts.items() if count > 0]
+        if occupied_items:
+            raise ValueError(f"当前知识空间仍有关联数据，暂不能删除：{'，'.join(occupied_items)}。")
+
+        db.delete(knowledge_space)
+        db.commit()
+        return knowledge_space
+
     def list_documents(self, db: Session, knowledge_space_id: str | None = None) -> list[tuple[Document, int]]:
         chunk_counts = (
             db.query(Chunk.document_id.label("document_id"), func.count(Chunk.id).label("chunk_count"))
@@ -85,6 +109,22 @@ class IngestionService:
         if knowledge_space_id:
             query = query.filter(Document.knowledge_space_id == knowledge_space_id)
         return query.all()
+
+    def delete_document(self, db: Session, document_id: str) -> Document:
+        document = self.get_document(db, document_id)
+        if document is None:
+            raise ValueError(f"Document not found: {document_id}")
+
+        self.search_backend.remove_document(document.id)
+
+        (
+            db.query(IngestionJob)
+            .filter(IngestionJob.imported_document_id == document.id)
+            .update({IngestionJob.imported_document_id: None}, synchronize_session=False)
+        )
+        db.delete(document)
+        db.commit()
+        return document
 
     def get_document(self, db: Session, document_id: str) -> Document | None:
         return (

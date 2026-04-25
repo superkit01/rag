@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import { ConsoleShell } from "@/components/console-shell";
 import { useConsoleData } from "@/hooks/use-console-data";
@@ -9,9 +9,36 @@ import { fetchJson } from "@/lib/api";
 import { canCancelTask, canRetryTask, describeEvalSubmission, describeImportSubmission, getErrorMessage } from "@/lib/console";
 import type { EvalRunResponse, SourceImportResponse } from "@/lib/types";
 
+type TaskFilter = "all" | "ingestion" | "evaluation";
+
+type UnifiedTaskItem =
+  | {
+      type: "ingestion";
+      id: string;
+      createdAt: string;
+      title: string;
+      subtitle: string;
+      href: string;
+      status: string;
+      onRetry: () => Promise<void>;
+      onCancel: () => Promise<void>;
+    }
+  | {
+      type: "evaluation";
+      id: string;
+      createdAt: string;
+      title: string;
+      subtitle: string;
+      href: string;
+      status: string;
+      onRetry: () => Promise<void>;
+      onCancel: () => Promise<void>;
+    };
+
 export function TasksPage() {
   const data = useConsoleData();
   const [status, setStatus] = useState("");
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("all");
 
   async function handleCreateSpace() {
     try {
@@ -62,6 +89,36 @@ export function TasksPage() {
     }
   }
 
+  const taskItems = useMemo<UnifiedTaskItem[]>(() => {
+    const ingestionItems: UnifiedTaskItem[] = data.ingestionJobs.map((item) => ({
+      type: "ingestion",
+      id: item.ingestion_job.id,
+      createdAt: item.ingestion_job.created_at,
+      title: item.document?.title ?? item.ingestion_job.source_uri,
+      subtitle: `状态：${item.ingestion_job.status} · 重试次数：${item.ingestion_job.attempt_count}`,
+      href: `/tasks/ingestion/${item.ingestion_job.id}`,
+      status: item.ingestion_job.status,
+      onRetry: () => retryImport(item.ingestion_job.id),
+      onCancel: () => cancelImport(item.ingestion_job.id)
+    }));
+
+    const evalItems: UnifiedTaskItem[] = data.evalRuns.map((run) => ({
+      type: "evaluation",
+      id: run.id,
+      createdAt: run.created_at,
+      title: run.id,
+      subtitle: `状态：${run.status} · 已完成用例：${run.completed_cases}/${run.total_cases}`,
+      href: `/tasks/evaluation/${run.id}`,
+      status: run.status,
+      onRetry: () => retryEval(run.id),
+      onCancel: () => cancelEval(run.id)
+    }));
+
+    return [...ingestionItems, ...evalItems].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }, [data.ingestionJobs, data.evalRuns]);
+
+  const filteredTaskItems = taskItems.filter((item) => taskFilter === "all" || item.type === taskFilter);
+
   return (
     <ConsoleShell
       activeHref="/tasks"
@@ -75,65 +132,51 @@ export function TasksPage() {
       onCreateSpace={handleCreateSpace}
       status={status || data.bootStatus}
     >
-      <div className="grid">
-        <div className="stack">
-          <div className="card">
-            <h2>导入任务</h2>
-            <div className="list">
-              {data.ingestionJobs.map((item) => (
-                <div className="list-item" key={item.ingestion_job.id}>
-                  <Link href={`/tasks/ingestion/${item.ingestion_job.id}`} className="link-card">
-                    <strong>{item.document?.title ?? item.ingestion_job.source_uri}</strong>
-                    <div className="tiny">
-                      status={item.ingestion_job.status} · attempt={item.ingestion_job.attempt_count}
-                    </div>
-                  </Link>
-                  <div className="action-row">
-                    {canRetryTask(item.ingestion_job.status) ? (
-                      <button className="mini-button" type="button" onClick={() => retryImport(item.ingestion_job.id)}>
-                        重试
-                      </button>
-                    ) : null}
-                    {canCancelTask(item.ingestion_job.status) ? (
-                      <button className="mini-button" type="button" onClick={() => cancelImport(item.ingestion_job.id)}>
-                        取消
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
+      <div className="page-toolbar">
+        <div className="page-toolbar-main">
+          <h2>任务管理</h2>
+          <div className="page-toolbar-meta">统一查看导入任务和评测任务，并支持按类型筛选。</div>
         </div>
+        <div className="field" style={{ marginTop: 0, width: 220 }}>
+          <label>任务类型</label>
+          <select className="select" value={taskFilter} onChange={(event) => setTaskFilter(event.target.value as TaskFilter)}>
+            <option value="all">全部任务</option>
+            <option value="ingestion">导入任务</option>
+            <option value="evaluation">评测任务</option>
+          </select>
+        </div>
+      </div>
 
-        <div className="stack">
-          <div className="card">
-            <h2>评测任务</h2>
-            <div className="list">
-              {data.evalRuns.map((run) => (
-                <div className="list-item" key={run.id}>
-                  <Link href={`/tasks/evaluation/${run.id}`} className="link-card">
-                    <strong>{run.id}</strong>
-                    <div className="tiny">
-                      status={run.status} · cases={run.completed_cases}/{run.total_cases}
-                    </div>
-                  </Link>
-                  <div className="action-row">
-                    {canRetryTask(run.status) ? (
-                      <button className="mini-button" type="button" onClick={() => retryEval(run.id)}>
-                        重试
-                      </button>
-                    ) : null}
-                    {canCancelTask(run.status) ? (
-                      <button className="mini-button" type="button" onClick={() => cancelEval(run.id)}>
-                        取消
-                      </button>
-                    ) : null}
-                  </div>
+      <div className="card scroll-card">
+        <div className="card-header">
+          <h2>任务列表</h2>
+          <div className="count-badge">{filteredTaskItems.length} 条</div>
+        </div>
+        <div className="list scroll-list">
+          {filteredTaskItems.map((item) => (
+            <div className="list-item" key={`${item.type}-${item.id}`}>
+              <Link href={item.href} className="link-card">
+                <div className="row" style={{ alignItems: "center" }}>
+                  <strong style={{ marginBottom: 0 }}>{item.title}</strong>
+                  <div className="chip">{item.type === "ingestion" ? "导入任务" : "评测任务"}</div>
                 </div>
-              ))}
+                <div className="tiny">{item.subtitle}</div>
+                <div className="tiny mono">{item.id}</div>
+              </Link>
+              <div className="action-row">
+                {canRetryTask(item.status) ? (
+                  <button className="mini-button" type="button" onClick={() => void item.onRetry()}>
+                    重试
+                  </button>
+                ) : null}
+                {canCancelTask(item.status) ? (
+                  <button className="mini-button" type="button" onClick={() => void item.onCancel()}>
+                    取消
+                  </button>
+                ) : null}
+              </div>
             </div>
-          </div>
+          ))}
         </div>
       </div>
     </ConsoleShell>

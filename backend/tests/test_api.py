@@ -74,6 +74,17 @@ def test_import_and_fragment_lookup(tmp_path: Path) -> None:
         assert "回滚预案" in fragment.json()["content"]
 
 
+def test_document_can_be_deleted(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        _, document_id = seed_document(client)
+        deleted = client.delete(f"/api/documents/{document_id}")
+        assert deleted.status_code == 200
+        assert deleted.json()["id"] == document_id
+
+        missing = client.get(f"/api/documents/{document_id}")
+        assert missing.status_code == 404
+
+
 def test_import_from_local_source_path(tmp_path: Path) -> None:
     source_path = tmp_path / "docs" / "流程规范.md"
     source_path.parent.mkdir(parents=True, exist_ok=True)

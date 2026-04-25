@@ -32,15 +32,15 @@ export function HistoryPage() {
       onCreateSpace={handleCreateSpace}
       status={status || data.bootStatus}
     >
-      <div className="card">
+      <div className="card scroll-card">
         <h2>历史查询</h2>
-        <div className="list">
+        <div className="list scroll-list">
           {data.traces.map((trace) => (
             <div className="list-item" key={trace.id}>
               <strong>{trace.question}</strong>
               <div className="tiny mono">{trace.id}</div>
               <div style={{ marginTop: 8 }}>{trace.answer}</div>
-              <div className="tiny">confidence {Math.round(trace.confidence * 100)}%</div>
+              <div className="tiny">置信度 {Math.round(trace.confidence * 100)}%</div>
               <div className="chip-row" style={{ marginTop: 8 }}>
                 {trace.source_documents.map((item) => (
                   <div className="chip" key={item.document_id}>
