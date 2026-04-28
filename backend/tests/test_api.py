@@ -1,3 +1,4 @@
+import base64
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -43,7 +44,13 @@ def make_client(tmp_path: Path, orchestrator: object | None = None) -> TestClien
     return TestClient(app)
 
 
-def seed_document(client: TestClient) -> tuple[str, str]:
+def encoded_text_payload(content: str) -> str:
+    return base64.b64encode(content.encode("utf-8")).decode("ascii")
+
+
+def seed_document(client: TestClient, tmp_path: Path) -> tuple[str, str]:
+    del tmp_path
+    content = "# 研发管理办法\n\n## 变更控制\n涉及核心数据的上线必须具备回滚预案、发布窗口审批和测试准入。"
     spaces = client.get("/api/knowledge-spaces")
     knowledge_space_id = spaces.json()[0]["id"]
     imported = client.post(
@@ -51,17 +58,29 @@ def seed_document(client: TestClient) -> tuple[str, str]:
         json={
             "title": "研发管理办法.md",
             "knowledge_space_id": knowledge_space_id,
-            "inline_content": "# 研发管理办法\n\n## 变更控制\n涉及核心数据的上线必须具备回滚预案、发布窗口审批和测试准入。",
-            "source_type": "markdown",
+            "uploaded_file_name": "研发管理办法.md",
+            "uploaded_file_base64": encoded_text_payload(content),
         },
     )
     body = imported.json()
     return knowledge_space_id, body["document"]["id"]
 
 
+def import_uploaded_markdown(client: TestClient, knowledge_space_id: str, title: str, content: str):
+    return client.post(
+        "/api/sources/import",
+        json={
+            "title": title,
+            "knowledge_space_id": knowledge_space_id,
+            "uploaded_file_name": title,
+            "uploaded_file_base64": encoded_text_payload(content),
+        },
+    )
+
+
 def test_import_and_fragment_lookup(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        knowledge_space_id, document_id = seed_document(client)
+        knowledge_space_id, document_id = seed_document(client, tmp_path)
         response = client.get(f"/api/documents/{document_id}")
         assert response.status_code == 200
         document = response.json()
@@ -76,7 +95,7 @@ def test_import_and_fragment_lookup(tmp_path: Path) -> None:
 
 def test_document_can_be_deleted(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        _, document_id = seed_document(client)
+        _, document_id = seed_document(client, tmp_path)
         deleted = client.delete(f"/api/documents/{document_id}")
         assert deleted.status_code == 200
         assert deleted.json()["id"] == document_id
@@ -85,14 +104,7 @@ def test_document_can_be_deleted(tmp_path: Path) -> None:
         assert missing.status_code == 404
 
 
-def test_import_from_local_source_path(tmp_path: Path) -> None:
-    source_path = tmp_path / "docs" / "流程规范.md"
-    source_path.parent.mkdir(parents=True, exist_ok=True)
-    source_path.write_text(
-        "# 流程规范\n\n## 发布门禁\n发布前需要完成测试准入和窗口审批。",
-        encoding="utf-8",
-    )
-
+def test_source_path_import_is_rejected(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         spaces = client.get("/api/knowledge-spaces")
         knowledge_space_id = spaces.json()[0]["id"]
@@ -101,17 +113,29 @@ def test_import_from_local_source_path(tmp_path: Path) -> None:
             json={
                 "title": "流程规范.md",
                 "knowledge_space_id": knowledge_space_id,
-                "source_path": str(source_path),
+                "source_path": str(tmp_path / "docs" / "流程规范.md"),
             },
         )
-        assert response.status_code == 202
-        payload = response.json()
-        assert payload["document"]["title"] == "流程规范.md"
+        assert response.status_code == 422
+        assert "uploaded_file_base64" in response.text
 
-        document = client.get(f"/api/documents/{payload['document']['id']}")
-        assert document.status_code == 200
-        assert document.json()["source_uri"] == str(source_path)
-        assert "测试准入" in document.json()["chunks"][0]["content"]
+
+def test_inline_content_import_is_rejected(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        spaces = client.get("/api/knowledge-spaces")
+        knowledge_space_id = spaces.json()[0]["id"]
+        response = client.post(
+            "/api/sources/import",
+            json={
+                "title": "内联制度.md",
+                "knowledge_space_id": knowledge_space_id,
+                "inline_content": "# 内联制度\n\n## 门禁\n未完成审批不得发布。",
+                "source_type": "markdown",
+            },
+        )
+
+        assert response.status_code == 422
+        assert "uploaded_file_base64" in response.text
 
 
 def test_import_from_uploaded_local_file_payload(tmp_path: Path) -> None:
@@ -132,21 +156,14 @@ def test_import_from_uploaded_local_file_payload(tmp_path: Path) -> None:
 
         document = client.get(f"/api/documents/{payload['document']['id']}")
         assert document.status_code == 200
-        assert document.json()["source_uri"] == "upload://上传制度.md"
+        assert document.json()["source_uri"] == "上传制度.md"
         assert document.json()["storage_uri"].startswith("s3://rag-documents/uploads/")
         assert "测试准入" in document.json()["chunks"][0]["content"]
         stored_path = tmp_path / "object-storage" / document.json()["storage_uri"].replace("s3://", "", 1)
         assert stored_path.exists()
 
 
-def test_import_from_storage_uri_mapping(tmp_path: Path) -> None:
-    storage_path = tmp_path / "object-storage" / "rag-documents" / "policies" / "架构评审制度.md"
-    storage_path.parent.mkdir(parents=True, exist_ok=True)
-    storage_path.write_text(
-        "# 架构评审制度\n\n## 风险治理\n高风险模块必须保留架构评审记录。",
-        encoding="utf-8",
-    )
-
+def test_storage_uri_import_is_rejected(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         spaces = client.get("/api/knowledge-spaces")
         knowledge_space_id = spaces.json()[0]["id"]
@@ -158,18 +175,11 @@ def test_import_from_storage_uri_mapping(tmp_path: Path) -> None:
                 "storage_uri": "s3://rag-documents/policies/架构评审制度.md",
             },
         )
-        assert response.status_code == 202
-        payload = response.json()
-
-        document = client.get(f"/api/documents/{payload['document']['id']}")
-        assert document.status_code == 200
-        assert document.json()["storage_uri"] == "s3://rag-documents/policies/架构评审制度.md"
-        assert "架构评审记录" in document.json()["chunks"][0]["content"]
+        assert response.status_code == 422
+        assert "uploaded_file_base64" in response.text
 
 
-def test_failed_import_can_retry_after_source_becomes_available(tmp_path: Path) -> None:
-    source_path = tmp_path / "late" / "补录制度.md"
-
+def test_failed_import_retry_reuses_uploaded_payload(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         spaces = client.get("/api/knowledge-spaces")
         knowledge_space_id = spaces.json()[0]["id"]
@@ -178,7 +188,8 @@ def test_failed_import_can_retry_after_source_becomes_available(tmp_path: Path) 
             json={
                 "title": "补录制度.md",
                 "knowledge_space_id": knowledge_space_id,
-                "source_path": str(source_path),
+                "uploaded_file_name": "补录制度.md",
+                "uploaded_file_base64": "not-valid-base64",
             },
         )
         assert first.status_code == 202
@@ -186,15 +197,11 @@ def test_failed_import_can_retry_after_source_becomes_available(tmp_path: Path) 
         assert failed["ingestion_job"]["status"] == "failed"
         assert failed["ingestion_job"]["attempt_count"] == 1
 
-        source_path.parent.mkdir(parents=True, exist_ok=True)
-        source_path.write_text("# 补录制度\n\n## 要求\n补录后需要重新索引。", encoding="utf-8")
-
         retried = client.post(f"/api/sources/jobs/{failed['ingestion_job']['id']}/retry")
         assert retried.status_code == 202
         payload = retried.json()
-        assert payload["ingestion_job"]["status"] == "completed"
+        assert payload["ingestion_job"]["status"] == "failed"
         assert payload["ingestion_job"]["attempt_count"] == 2
-        assert payload["document"]["title"] == "补录制度.md"
 
 
 def test_pending_import_job_can_be_cancelled(tmp_path: Path) -> None:
@@ -208,8 +215,8 @@ def test_pending_import_job_can_be_cancelled(tmp_path: Path) -> None:
             json={
                 "title": "待取消制度.md",
                 "knowledge_space_id": knowledge_space_id,
-                "inline_content": "# 待取消制度\n\n## 门禁\n未完成审批不得发布。",
-                "source_type": "markdown",
+                "uploaded_file_name": "待取消制度.md",
+                "uploaded_file_base64": encoded_text_payload("# 待取消制度\n\n## 门禁\n未完成审批不得发布。"),
             },
         )
         assert response.status_code == 202
@@ -228,7 +235,7 @@ def test_pending_import_job_can_be_cancelled(tmp_path: Path) -> None:
 
 def test_pending_eval_run_can_be_cancelled(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        knowledge_space_id, document_id = seed_document(client)
+        knowledge_space_id, document_id = seed_document(client, tmp_path)
 
     orchestrator = DeferredWorkflowOrchestrator()
 
@@ -262,7 +269,7 @@ def test_pending_eval_run_can_be_cancelled(tmp_path: Path) -> None:
 
 def test_grounded_answer_flow(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        knowledge_space_id, _ = seed_document(client)
+        knowledge_space_id, _ = seed_document(client, tmp_path)
         response = client.post(
             "/api/queries/answer",
             json={
@@ -294,7 +301,7 @@ def test_grounded_answer_flow(tmp_path: Path) -> None:
 
 def test_grounded_answer_stream(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        knowledge_space_id, _ = seed_document(client)
+        knowledge_space_id, _ = seed_document(client, tmp_path)
         with client.stream(
             "POST",
             "/api/queries/answer/stream",
@@ -314,7 +321,7 @@ def test_grounded_answer_stream(tmp_path: Path) -> None:
 
 def test_eval_run_reports_metrics(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
-        knowledge_space_id, document_id = seed_document(client)
+        knowledge_space_id, document_id = seed_document(client, tmp_path)
         response = client.post(
             "/api/eval/runs",
             json={

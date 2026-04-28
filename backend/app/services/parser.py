@@ -5,7 +5,6 @@ from dataclasses import dataclass
 from pathlib import Path
 import re
 from tempfile import TemporaryDirectory
-from urllib.parse import unquote, urlparse
 
 from app.schemas.documents import SourceImportRequest
 from app.services.text_utils import normalize_whitespace, strip_html
@@ -30,20 +29,11 @@ class ParsedDocument:
 
 class CompositeDocumentParser:
     def __init__(self, object_storage_local_root: str | None = None) -> None:
-        self.object_storage_local_root = (
-            Path(object_storage_local_root).expanduser()
-            if object_storage_local_root
-            else None
-        )
+        self.object_storage_local_root = object_storage_local_root
 
     def parse(self, request: SourceImportRequest) -> ParsedDocument:
         source_type = self._infer_source_type(request)
-        if request.inline_content is not None:
-            raw_content = request.inline_content
-        elif request.uploaded_file_base64 is not None:
-            raw_content = self._load_uploaded_content(request, source_type)
-        else:
-            raw_content = self._load_content(request, source_type)
+        raw_content = self._load_uploaded_content(request, source_type)
         sections = self._parse_sections(source_type, raw_content)
         return ParsedDocument(
             title=request.title,
@@ -66,7 +56,7 @@ class CompositeDocumentParser:
     def _infer_source_type(self, request: SourceImportRequest) -> str:
         if request.source_type:
             return request.source_type.lower()
-        candidate = request.source_path or request.storage_uri or request.uploaded_file_name or request.title
+        candidate = request.uploaded_file_name or request.title
         suffix = Path(candidate).suffix.lower()
         return {
             ".md": "markdown",
@@ -80,13 +70,9 @@ class CompositeDocumentParser:
         }.get(suffix, "markdown")
 
     def _build_source_uri(self, request: SourceImportRequest) -> str:
-        if request.source_path:
-            return request.source_path
-        if request.storage_uri:
-            return request.storage_uri
         if request.uploaded_file_name:
-            return f"upload://{request.uploaded_file_name}"
-        return f"inline://{request.title}"
+            return request.uploaded_file_name
+        return request.title
 
     def _load_uploaded_content(self, request: SourceImportRequest, source_type: str) -> str:
         content_bytes = self._decode_uploaded_bytes(request.uploaded_file_base64 or "")
@@ -107,41 +93,6 @@ class CompositeDocumentParser:
             return base64.b64decode(payload, validate=True)
         except ValueError as exc:
             raise ValueError("Uploaded file payload is not valid base64.") from exc
-
-    def _load_content(self, request: SourceImportRequest, source_type: str) -> str:
-        resolved_path = self._resolve_source_path(request)
-        if resolved_path is None:
-            raise ValueError("Missing source content.")
-        if resolved_path.exists():
-            if source_type in {"markdown", "html", "text"}:
-                return resolved_path.read_text(encoding="utf-8")
-            return self._parse_via_docling(resolved_path)
-        source_uri = request.source_path or request.storage_uri or str(resolved_path)
-        raise ValueError(f"Source path or storage URI is not readable in the current runtime: {source_uri}")
-
-    def _resolve_source_path(self, request: SourceImportRequest) -> Path | None:
-        if request.source_path:
-            return Path(request.source_path).expanduser()
-
-        if not request.storage_uri:
-            return None
-
-        parsed = urlparse(request.storage_uri)
-        if parsed.scheme == "":
-            return Path(request.storage_uri).expanduser()
-        if parsed.scheme == "file":
-            file_path = f"{parsed.netloc}{parsed.path}" if parsed.netloc else parsed.path
-            return Path(unquote(file_path)).expanduser()
-        if parsed.scheme in {"s3", "minio"}:
-            if not self.object_storage_local_root:
-                raise ValueError("Storage URI resolution requires OBJECT_STORAGE_LOCAL_ROOT to be configured.")
-            key = parsed.path.lstrip("/")
-            if not parsed.netloc or not key:
-                raise ValueError(f"Storage URI must include bucket and key: {request.storage_uri}")
-            return self.object_storage_local_root / parsed.netloc / key
-        raise ValueError(
-            "Unsupported storage URI scheme. Use file://, s3://, minio://, or a readable local path."
-        )
 
     def _parse_sections(self, source_type: str, raw_content: str) -> list[ParsedSection]:
         if source_type == "html":

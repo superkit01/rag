@@ -131,7 +131,6 @@
 ### 导入与任务
 
 - `POST /api/sources/import`
-- `POST /api/sources/import/batch`
 - `GET /api/sources/jobs`
 - `GET /api/sources/jobs/{job_id}`
 - `POST /api/sources/jobs/{job_id}/retry`

@@ -32,14 +32,14 @@
 - 单页控制台拆成 `namespace / dashboard / documents / chat / tasks / evaluation / history`
 - `chat` 页面支持流式输出
 - 文档记录和任务记录支持详情页
-- `web` 端上传入口收紧为“内联内容 + 本地文件上传”
+- `web` 端上传入口收紧为本地文件上传
 
 ### 后端
 
 - 用真实 Temporal 替换 stub
 - 导入、重建索引、评测改为异步 job
 - 新增任务查询、重试、取消接口
-- 导入任务支持 `source_path` / `storage_uri`
+- 导入任务支持前端弹窗文件上传 payload
 - OpenSearch 检索从占位实现升级到真实适配器
 - embedding provider 支持 `hash` 与真实 OpenAI-compatible embeddings 切换
 

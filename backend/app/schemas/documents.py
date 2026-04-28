@@ -9,9 +9,6 @@ class SourceImportRequest(BaseModel):
     knowledge_space_id: str | None = None
     knowledge_space_name: str | None = None
     title: str = Field(min_length=1, max_length=255)
-    source_path: str | None = None
-    storage_uri: str | None = None
-    inline_content: str | None = None
     uploaded_file_name: str | None = None
     uploaded_file_base64: str | None = None
     source_type: str | None = None
@@ -22,9 +19,9 @@ class SourceImportRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_source(self) -> "SourceImportRequest":
-        if not any([self.source_path, self.storage_uri, self.inline_content, self.uploaded_file_base64]):
-            raise ValueError("One of source_path, storage_uri, inline_content, or uploaded_file_base64 must be provided.")
-        if self.uploaded_file_base64 and not self.uploaded_file_name:
+        if not self.uploaded_file_base64:
+            raise ValueError("uploaded_file_base64 must be provided.")
+        if not self.uploaded_file_name:
             raise ValueError("uploaded_file_name must be provided when uploaded_file_base64 is used.")
         return self
 

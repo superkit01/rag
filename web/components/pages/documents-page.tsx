@@ -84,7 +84,7 @@ export function DocumentsPage() {
     <ConsoleShell
       activeHref="/documents"
       title="Document Intake & Records"
-      description="上传入口只保留内联内容和本地文件上传；文档记录可单独进入详情页查看 source、chunk 和 fragment。"
+      description="上传入口只保留本地文件上传；文档记录可单独进入详情页查看 source、chunk 和 fragment。"
       spaces={data.spaces}
       selectedSpaceId={data.selectedSpaceId}
       onSelectedSpaceIdChange={data.setSelectedSpaceId}

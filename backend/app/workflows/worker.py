@@ -42,6 +42,12 @@ async def main() -> None:
         ],
         activity_executor=activity_executor,
     )
+    print(
+        "Temporal worker started "
+        f"(host={settings.temporal_host}, namespace={settings.temporal_namespace}, "
+        f"task_queue={settings.temporal_task_queue})",
+        flush=True,
+    )
     await worker.run()
 
 

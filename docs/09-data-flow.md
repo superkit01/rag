@@ -85,15 +85,9 @@ flowchart TD
 
 - `POST /api/sources/import`
 
-前端 `web` 当前暴露两种方式：
+前端 `web` 和后端导入 API 当前只支持一种方式：
 
-- `inline_content`
 - 本地文件上传 `uploaded_file_base64`
-
-后端仍兼容：
-
-- `source_path`
-- `storage_uri`
 
 对应代码：
 

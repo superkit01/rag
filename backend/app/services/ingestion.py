@@ -152,9 +152,7 @@ class IngestionService:
 
     def create_import_job(self, db: Session, request: SourceImportRequest) -> IngestionJob:
         knowledge_space = self.ensure_knowledge_space(db, request.knowledge_space_id, request.knowledge_space_name)
-        source_uri = request.source_path or request.storage_uri or (
-            f"upload://{request.uploaded_file_name}" if request.uploaded_file_name else f"inline://{request.title}"
-        )
+        source_uri = request.uploaded_file_name or request.title
         job = IngestionJob(
             knowledge_space_id=knowledge_space.id,
             job_kind="import",
@@ -256,7 +254,7 @@ class IngestionService:
                 title=request.title,
                 source_type=parsed.source_type,
                 source_uri=parsed.source_uri,
-                storage_uri=persisted_storage_uri or request.storage_uri,
+                storage_uri=persisted_storage_uri,
                 visibility_scope=request.visibility_scope,
                 source_acl_refs=request.source_acl_refs,
                 connector_id=request.connector_id,

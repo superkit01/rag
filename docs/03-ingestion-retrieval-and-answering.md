@@ -2,23 +2,13 @@
 
 ## 1. 文档导入入口
 
-后端当前支持三种输入方式：
+后端当前只支持前端弹窗选择文件上传：
 
-- `inline_content`
-- `source_path`
-- `storage_uri`
-
-其中 `storage_uri` 在开发环境支持：
-
-- `file://`
-- `s3://bucket/key`
-- `minio://bucket/key`
-
-`s3://` 和 `minio://` 会映射到 `OBJECT_STORAGE_LOCAL_ROOT/<bucket>/<key>`。
+- `uploaded_file_name`
+- `uploaded_file_base64`
 
 其中前端 `web` 控制台当前只暴露：
 
-- `inline_content`
 - 本地文件上传（落到 `uploaded_file_base64`）
 
 ## 2. 解析策略

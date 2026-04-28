@@ -21,7 +21,7 @@
 
 ## 3. 当前关键设计决策
 
-- 文档导入支持 `inline_content`、`source_path`、`storage_uri`。
+- 文档导入只支持前端弹窗选择文件上传，后端接收 `uploaded_file_name` 和 `uploaded_file_base64`。
 - 二进制文档解析走 `Docling` 可选依赖，未安装时给出明确错误。
 - 检索采用混合策略：
   - 词法召回：基于 OpenSearch token/term 字段。

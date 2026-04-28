@@ -19,7 +19,7 @@ flowchart LR
 - `backend/`：FastAPI API、SQLAlchemy 数据模型、文档导入/切块/索引/问答/评测服务。
 - `web/`：Next.js 最小化运营与问答界面。
 - `docker-compose.yml`：本地依赖栈，包括 PostgreSQL、Redis、OpenSearch、MinIO、Temporal。
-- 本地默认使用 `SQLite + in-memory search + heuristic answer provider`，便于无外部依赖时跑通。
+- 轻量本地模式使用 `SQLite + in-memory search + immediate workflow + heuristic answer provider`，便于无外部依赖时跑通。
 - 生产目标配置仍然围绕 `PostgreSQL + OpenSearch + MinIO + Temporal + OpenAI-compatible provider`。
 - embedding provider 支持 `hash` 与 `openai` 两档，可通过 `EMBEDDING_BACKEND` 切换。
 
@@ -53,24 +53,19 @@ flowchart LR
    pip install -e '.[dev]'
    ```
 
-3. 运行后端：
+3. 运行轻量后端：
 
    ```bash
+   WORKFLOW_BACKEND=immediate \
+   SEARCH_BACKEND=memory \
    .venv/bin/python -m uvicorn app.main:app --reload --port 8000
    ```
 
-4. 运行 Temporal worker：
+4. 如果切到 `WORKFLOW_BACKEND=temporal`，另开终端运行 Temporal worker：
 
    ```bash
    cd backend
    .venv/bin/python -m app.workflows.worker
-   ```
-
-   开发模式下如果要用对象存储 URI 导入，本地映射目录默认是 `./data/object_storage`，例如：
-
-   ```bash
-   mkdir -p data/object_storage/rag-documents/policies
-   cp /path/to/policy.md data/object_storage/rag-documents/policies/policy.md
    ```
 
 5. 运行前端：
@@ -81,7 +76,7 @@ flowchart LR
    pnpm dev
    ```
 
-5. 打开：
+6. 打开：
 
    - API Docs: `http://localhost:8000/docs`
    - Web Console: `http://localhost:3000`
@@ -89,10 +84,9 @@ flowchart LR
 ## Docker Compose
 
 ```bash
-docker compose up --build
+docker compose up -d postgres redis opensearch minio temporal temporal-ui
 ```
 
-- Compose 会为 API 容器自动覆盖容器内连接地址，例如 `postgres`, `redis`, `minio`, `temporal`。
 - `infra/postgres/init/01-create-temporal-db.sql` 会在首次初始化 PostgreSQL 数据卷时创建 `temporal` 数据库。
 - 当前 Dockerfile 和 Compose 已默认改用国内更友好的镜像前缀，减少 Docker Hub 拉取失败的问题。
 - 当前 Compose 只负责中间件：`postgres`、`redis`、`opensearch`、`minio`、`temporal`、`temporal-ui`。
@@ -171,7 +165,6 @@ docker compose up --build
 ## 关键接口
 
 - `POST /api/sources/import`
-- `POST /api/sources/import/batch`
 - `GET /api/sources/jobs`
 - `GET /api/sources/jobs/{job_id}`
 - `POST /api/documents/{id}/reindex`
@@ -190,25 +183,16 @@ docker compose up --build
 - `GET /api/answer-traces`
 - `GET /api/dashboard/summary`
 
-`POST /api/sources/import` 当前支持三种导入方式：
+`POST /api/sources/import` 当前只支持前端弹窗选择文件上传：
 
-- `inline_content`
-- `source_path`
-- `storage_uri`
-
-本地开发时 `storage_uri` 支持：
-
-- `file:///absolute/path/to/file.md`
-- `s3://rag-documents/path/to/file.md`
-- `minio://rag-documents/path/to/file.md`
-
-其中 `s3://` 和 `minio://` 会映射到 `OBJECT_STORAGE_LOCAL_ROOT/<bucket>/<key>`，默认根目录为 `./data/object_storage`。
+- `uploaded_file_name`
+- `uploaded_file_base64`
 
 ## 设计说明
 
 - 数据模型预留了 `visibility_scope`, `source_acl_refs`, `connector_id`, `ingestion_job_id`。
 - 导入链路优先支持 `Markdown/HTML/Text`，`PDF/DOCX/PPTX` 通过 `Docling` 适配器接入；如果本地未安装 `docling`，会给出明确提示。
-- Web 控制台内置了单文档导入、批量示例导入、问答反馈和单案例评测入口，适合做内部演示与验收。
+- Web 控制台内置了单文档文件导入、问答反馈和单案例评测入口，适合做内部演示与验收。
 - 检索采用“词法 + embedding rerank”混合检索，embedding provider 既支持本地 `hash`，也支持真实 OpenAI-compatible embeddings。
 - `SEARCH_BACKEND` 当前显式支持 `memory` 和 `opensearch` 两档；本机直接运行后端时默认仍使用 `memory`，需要时可切到 `opensearch`。
 - 单元测试默认使用 `WORKFLOW_BACKEND=immediate` 保持轻量回归，而标准开发和 Docker 环境默认使用真实 Temporal 工作流调度。
