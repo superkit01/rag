@@ -15,6 +15,8 @@ export function DocumentsPage() {
   const [importTitle, setImportTitle] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isImportModalOpen, setIsImportModalOpen] = useState(false);
+  const [isImportSubmitting, setIsImportSubmitting] = useState(false);
+  const [isDeleteSubmitting, setIsDeleteSubmitting] = useState(false);
   const [documentPendingDelete, setDocumentPendingDelete] = useState<{ id: string; title: string } | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -29,6 +31,11 @@ export function DocumentsPage() {
 
   async function handleImport(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isImportSubmitting) {
+      return;
+    }
+    setIsImportSubmitting(true);
+    setStatus("正在提交导入任务，请稍候。");
     try {
       const payload: Record<string, unknown> = {
         title: importTitle || selectedFile?.name,
@@ -52,6 +59,8 @@ export function DocumentsPage() {
       await data.refreshAll();
     } catch (error) {
       setStatus(getErrorMessage(error));
+    } finally {
+      setIsImportSubmitting(false);
     }
   }
 
@@ -65,9 +74,11 @@ export function DocumentsPage() {
   }
 
   async function handleDeleteDocument() {
-    if (!documentPendingDelete) {
+    if (!documentPendingDelete || isDeleteSubmitting) {
       return;
     }
+    setIsDeleteSubmitting(true);
+    setStatus("正在删除文档，请稍候。");
     try {
       const deleted = await fetchJson<DocumentDeleteResponse>(`/documents/${documentPendingDelete.id}`, {
         method: "DELETE"
@@ -77,6 +88,8 @@ export function DocumentsPage() {
       await data.refreshAll();
     } catch (error) {
       setStatus(getErrorMessage(error));
+    } finally {
+      setIsDeleteSubmitting(false);
     }
   }
 
@@ -135,19 +148,18 @@ export function DocumentsPage() {
       </div>
 
       {isImportModalOpen ? (
-        <div className="modal-overlay" role="presentation" onClick={() => setIsImportModalOpen(false)}>
+        <div className="modal-overlay" role="presentation">
           <div
             className="modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="import-document-title"
-            onClick={(event) => event.stopPropagation()}
           >
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <h2 id="import-document-title" style={{ marginBottom: 0 }}>
                 导入文档
               </h2>
-              <button className="mini-button" type="button" onClick={() => setIsImportModalOpen(false)}>
+              <button className="mini-button" type="button" onClick={() => setIsImportModalOpen(false)} disabled={isImportSubmitting}>
                 关闭
               </button>
             </div>
@@ -159,6 +171,7 @@ export function DocumentsPage() {
                   value={importTitle}
                   onChange={(event) => setImportTitle(event.target.value)}
                   placeholder="默认使用文件名"
+                  disabled={isImportSubmitting}
                 />
               </div>
               <div className="field">
@@ -169,20 +182,21 @@ export function DocumentsPage() {
                   style={{ display: "none" }}
                   accept=".md,.markdown,.txt,.html,.htm,.pdf,.docx,.pptx"
                   onChange={handleFileChange}
+                  disabled={isImportSubmitting}
                 />
                 <div className="row">
-                  <button className="button secondary" type="button" onClick={() => fileInputRef.current?.click()}>
+                  <button className="button secondary" type="button" onClick={() => fileInputRef.current?.click()} disabled={isImportSubmitting}>
                     选择文件
                   </button>
                   <span className="hint">{selectedFile ? selectedFile.name : "尚未选择文件"}</span>
                 </div>
               </div>
               <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
-                <button className="button secondary" type="button" onClick={() => setIsImportModalOpen(false)}>
+                <button className="button secondary" type="button" onClick={() => setIsImportModalOpen(false)} disabled={isImportSubmitting}>
                   取消
                 </button>
-                <button className="button" type="submit">
-                  提交导入
+                <button className="button" type="submit" disabled={isImportSubmitting} aria-busy={isImportSubmitting}>
+                  {isImportSubmitting ? "提交中..." : "提交导入"}
                 </button>
               </div>
             </form>
@@ -191,19 +205,18 @@ export function DocumentsPage() {
       ) : null}
 
       {documentPendingDelete ? (
-        <div className="modal-overlay" role="presentation" onClick={() => setDocumentPendingDelete(null)}>
+        <div className="modal-overlay" role="presentation">
           <div
             className="modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-document-title"
-            onClick={(event) => event.stopPropagation()}
           >
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <h2 id="delete-document-title" style={{ marginBottom: 0 }}>
                 删除文档
               </h2>
-              <button className="mini-button" type="button" onClick={() => setDocumentPendingDelete(null)}>
+              <button className="mini-button" type="button" onClick={() => setDocumentPendingDelete(null)} disabled={isDeleteSubmitting}>
                 关闭
               </button>
             </div>
@@ -211,11 +224,11 @@ export function DocumentsPage() {
               确认删除文档“{documentPendingDelete.title}”吗？删除后文档记录和检索切片会一起移除。
             </div>
             <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
-              <button className="button secondary" type="button" onClick={() => setDocumentPendingDelete(null)}>
+              <button className="button secondary" type="button" onClick={() => setDocumentPendingDelete(null)} disabled={isDeleteSubmitting}>
                 取消
               </button>
-              <button className="button danger" type="button" onClick={handleDeleteDocument}>
-                确认删除
+              <button className="button danger" type="button" onClick={handleDeleteDocument} disabled={isDeleteSubmitting} aria-busy={isDeleteSubmitting}>
+                {isDeleteSubmitting ? "删除中..." : "确认删除"}
               </button>
             </div>
           </div>

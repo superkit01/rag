@@ -530,7 +530,7 @@ select {
 }
 
 .scroll-card {
-  flex: none;
+  flex: 1;
 }
 
 .compact-card {
@@ -543,16 +543,11 @@ select {
 }
 
 .scroll-list {
-  max-height: 420px;
+  /* max-height: 420px; */
   overflow: auto;
   padding-right: 6px;
 }
 
-.namespace-scroll-list {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-}
 
 .table-card {
   flex: none;
@@ -1009,11 +1004,6 @@ select {
     max-height: none;
     overflow: visible;
     padding-right: 0;
-  }
-
-  .namespace-scroll-list {
-    flex: unset;
-    min-height: unset;
   }
 
   .table-card {

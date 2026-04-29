@@ -3,6 +3,24 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 import os
+from pathlib import Path
+
+
+def _load_dotenv() -> None:
+    for directory in (Path.cwd(), *Path.cwd().parents):
+        env_path = directory / ".env"
+        if not env_path.exists():
+            continue
+        for raw_line in env_path.read_text(encoding="utf-8").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+        return
+
+
+_load_dotenv()
 
 
 @dataclass(frozen=True)

@@ -12,10 +12,11 @@ import type { EvalRunResponse } from "@/lib/types";
 export function EvaluationPage() {
   const data = useConsoleData();
   const [status, setStatus] = useState("");
-  const [evalName, setEvalName] = useState("变更控制验证");
-  const [evalQuestion, setEvalQuestion] = useState("核心数据上线需要满足什么要求？");
+  const [evalName, setEvalName] = useState("");
+  const [evalQuestion, setEvalQuestion] = useState("");
   const [expectedDocumentId, setExpectedDocumentId] = useState("");
   const [isEvalModalOpen, setIsEvalModalOpen] = useState(false);
+  const [isEvalSubmitting, setIsEvalSubmitting] = useState(false);
 
   async function handleCreateSpace() {
     try {
@@ -28,6 +29,11 @@ export function EvaluationPage() {
 
   async function handleRunEval(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isEvalSubmitting) {
+      return;
+    }
+    setIsEvalSubmitting(true);
+    setStatus("正在提交评测任务，请稍候。");
     try {
       const result = await fetchJson<EvalRunResponse>("/eval/runs", {
         method: "POST",
@@ -49,6 +55,8 @@ export function EvaluationPage() {
       await data.refreshCollections(data.selectedSpaceId || data.spaces[0]?.id || "");
     } catch (error) {
       setStatus(getErrorMessage(error));
+    } finally {
+      setIsEvalSubmitting(false);
     }
   }
 
@@ -95,34 +103,44 @@ export function EvaluationPage() {
       </div>
 
       {isEvalModalOpen ? (
-        <div className="modal-overlay" role="presentation" onClick={() => setIsEvalModalOpen(false)}>
+        <div className="modal-overlay" role="presentation">
           <div
             className="modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="run-eval-title"
-            onClick={(event) => event.stopPropagation()}
           >
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <h2 id="run-eval-title" style={{ marginBottom: 0 }}>
                 运行评测
               </h2>
-              <button className="mini-button" type="button" onClick={() => setIsEvalModalOpen(false)}>
+              <button className="mini-button" type="button" onClick={() => setIsEvalModalOpen(false)} disabled={isEvalSubmitting}>
                 关闭
               </button>
             </div>
             <form onSubmit={handleRunEval}>
               <div className="field">
                 <label>评测名称</label>
-                <input className="input" value={evalName} onChange={(event) => setEvalName(event.target.value)} />
+                <input className="input" value={evalName} onChange={(event) => setEvalName(event.target.value)} disabled={isEvalSubmitting} />
               </div>
               <div className="field">
                 <label>评测问题</label>
-                <textarea className="textarea" style={{ minHeight: 100 }} value={evalQuestion} onChange={(event) => setEvalQuestion(event.target.value)} />
+                <textarea
+                  className="textarea"
+                  style={{ minHeight: 100 }}
+                  value={evalQuestion}
+                  onChange={(event) => setEvalQuestion(event.target.value)}
+                  disabled={isEvalSubmitting}
+                />
               </div>
               <div className="field">
                 <label>期望命中文档</label>
-                <select className="select" value={expectedDocumentId} onChange={(event) => setExpectedDocumentId(event.target.value)}>
+                <select
+                  className="select"
+                  value={expectedDocumentId}
+                  onChange={(event) => setExpectedDocumentId(event.target.value)}
+                  disabled={isEvalSubmitting}
+                >
                   <option value="">不指定</option>
                   {data.documents.map((document) => (
                     <option key={document.id} value={document.id}>
@@ -132,11 +150,11 @@ export function EvaluationPage() {
                 </select>
               </div>
               <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
-                <button className="button secondary" type="button" onClick={() => setIsEvalModalOpen(false)}>
+                <button className="button secondary" type="button" onClick={() => setIsEvalModalOpen(false)} disabled={isEvalSubmitting}>
                   取消
                 </button>
-                <button className="button" type="submit">
-                  提交评测
+                <button className="button" type="submit" disabled={isEvalSubmitting} aria-busy={isEvalSubmitting}>
+                  {isEvalSubmitting ? "提交中..." : "提交评测"}
                 </button>
               </div>
             </form>

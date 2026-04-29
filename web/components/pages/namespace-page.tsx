@@ -10,15 +10,24 @@ export function NamespacePage() {
   const data = useConsoleData();
   const [status, setStatus] = useState("");
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+  const [isCreateSubmitting, setIsCreateSubmitting] = useState(false);
+  const [isDeleteSubmitting, setIsDeleteSubmitting] = useState(false);
   const [spacePendingDelete, setSpacePendingDelete] = useState<{ id: string; name: string } | null>(null);
 
   async function handleCreateSpace() {
+    if (isCreateSubmitting) {
+      return;
+    }
+    setIsCreateSubmitting(true);
+    setStatus("正在创建知识空间，请稍候。");
     try {
       const created = await data.createSpace();
       setStatus(`知识空间“${created.name}”已创建并设为当前空间。`);
       setIsCreateModalOpen(false);
     } catch (error) {
       setStatus(getErrorMessage(error));
+    } finally {
+      setIsCreateSubmitting(false);
     }
   }
 
@@ -28,15 +37,19 @@ export function NamespacePage() {
   }
 
   async function handleDeleteSpace() {
-    if (!spacePendingDelete) {
+    if (!spacePendingDelete || isDeleteSubmitting) {
       return;
     }
+    setIsDeleteSubmitting(true);
+    setStatus("正在删除知识空间，请稍候。");
     try {
       const deleted = await data.deleteSpace(spacePendingDelete.id);
       setStatus(`知识空间“${deleted.name}”已删除。`);
       setSpacePendingDelete(null);
     } catch (error) {
       setStatus(getErrorMessage(error));
+    } finally {
+      setIsDeleteSubmitting(false);
     }
   }
 
@@ -64,7 +77,7 @@ export function NamespacePage() {
 
       <div className="card scroll-card">
         <h2>知识空间列表</h2>
-        <div className="list scroll-list namespace-scroll-list">
+        <div className="list scroll-list ">
           {data.spaces.map((space) => (
             <div className={`list-item ${space.id === data.selectedSpaceId ? "active" : ""}`} key={space.id}>
               <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
@@ -87,19 +100,18 @@ export function NamespacePage() {
       </div>
 
       {isCreateModalOpen ? (
-        <div className="modal-overlay" role="presentation" onClick={() => setIsCreateModalOpen(false)}>
+        <div className="modal-overlay" role="presentation">
           <div
             className="modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="create-space-title"
-            onClick={(event) => event.stopPropagation()}
           >
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <h2 id="create-space-title" style={{ marginBottom: 0 }}>
                 新增知识空间
               </h2>
-              <button className="mini-button" type="button" onClick={() => setIsCreateModalOpen(false)}>
+              <button className="mini-button" type="button" onClick={() => setIsCreateModalOpen(false)} disabled={isCreateSubmitting}>
                 关闭
               </button>
             </div>
@@ -111,14 +123,15 @@ export function NamespacePage() {
                   value={data.spaceName}
                   onChange={(event) => data.setSpaceName(event.target.value)}
                   placeholder="新知识空间名称"
+                  disabled={isCreateSubmitting}
                 />
               </div>
               <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
-                <button className="button secondary" type="button" onClick={() => setIsCreateModalOpen(false)}>
+                <button className="button secondary" type="button" onClick={() => setIsCreateModalOpen(false)} disabled={isCreateSubmitting}>
                   取消
                 </button>
-                <button className="button" type="submit">
-                  创建知识空间
+                <button className="button" type="submit" disabled={isCreateSubmitting} aria-busy={isCreateSubmitting}>
+                  {isCreateSubmitting ? "创建中..." : "创建知识空间"}
                 </button>
               </div>
             </form>
@@ -127,19 +140,18 @@ export function NamespacePage() {
       ) : null}
 
       {spacePendingDelete ? (
-        <div className="modal-overlay" role="presentation" onClick={() => setSpacePendingDelete(null)}>
+        <div className="modal-overlay" role="presentation">
           <div
             className="modal-card"
             role="dialog"
             aria-modal="true"
             aria-labelledby="delete-space-title"
-            onClick={(event) => event.stopPropagation()}
           >
             <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
               <h2 id="delete-space-title" style={{ marginBottom: 0 }}>
                 删除知识空间
               </h2>
-              <button className="mini-button" type="button" onClick={() => setSpacePendingDelete(null)}>
+              <button className="mini-button" type="button" onClick={() => setSpacePendingDelete(null)} disabled={isDeleteSubmitting}>
                 关闭
               </button>
             </div>
@@ -147,11 +159,11 @@ export function NamespacePage() {
               确认删除知识空间“{spacePendingDelete.name}”吗？如果当前空间仍有关联文档、任务、问答或评测数据，系统会阻止删除。
             </div>
             <div className="row" style={{ marginTop: 16, justifyContent: "flex-end" }}>
-              <button className="button secondary" type="button" onClick={() => setSpacePendingDelete(null)}>
+              <button className="button secondary" type="button" onClick={() => setSpacePendingDelete(null)} disabled={isDeleteSubmitting}>
                 取消
               </button>
-              <button className="button danger" type="button" onClick={handleDeleteSpace}>
-                确认删除
+              <button className="button danger" type="button" onClick={handleDeleteSpace} disabled={isDeleteSubmitting} aria-busy={isDeleteSubmitting}>
+                {isDeleteSubmitting ? "删除中..." : "确认删除"}
               </button>
             </div>
           </div>

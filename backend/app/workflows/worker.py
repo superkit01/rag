@@ -23,6 +23,9 @@ from app.workflows.orchestrator import connect_temporal_client
 
 async def main() -> None:
     settings = get_settings()
+    if settings.workflow_backend == "immediate":
+        print("Temporal worker skipped (workflow_backend=immediate).", flush=True)
+        return
     client = await connect_temporal_client(settings)
     activity_executor = ThreadPoolExecutor(max_workers=8)
     worker = Worker(
