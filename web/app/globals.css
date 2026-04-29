@@ -678,6 +678,8 @@ select {
   flex-direction: column;
   gap: 18px;
   padding: 20px;
+  height: 100vh;
+  overflow-y: auto;
   background: rgba(248, 250, 252, 0.86);
   border-right: 1px solid rgba(15, 23, 42, 0.08);
   backdrop-filter: blur(14px);
