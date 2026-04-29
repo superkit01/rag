@@ -18,6 +18,11 @@ export function CitationBadge({ citation, index }: CitationBadgeProps) {
       className="relative inline-block"
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
+      onFocus={() => setIsHovered(true)}
+      onBlur={() => setIsHovered(false)}
+      tabIndex={0}
+      role="button"
+      aria-label={`Show citation ${index} details`}
     >
       <sup className="inline-flex items-center justify-center w-5 h-5 text-xs font-semibold text-blue-700 bg-blue-100 rounded cursor-pointer hover:bg-blue-200 transition-colors">
         {index}
