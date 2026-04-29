@@ -122,5 +122,5 @@ export type AnswerTrace = {
 
 export async function fetchAnswerTraces(knowledgeSpaceId?: string): Promise<AnswerTrace[]> {
   const params = knowledgeSpaceId ? `?knowledge_space_id=${knowledgeSpaceId}` : "";
-  return fetchJson<{ traces: AnswerTrace[] }>(`/answer-traces${params}`).then((data) => data.traces ?? []);
+  return fetchJson<AnswerTrace[]>(`/answer-traces${params}`);
 }
