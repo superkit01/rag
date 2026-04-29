@@ -1,18 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useRef, useState } from "react";
+import { FormEvent, useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
 import { useConsoleData } from "@/hooks/use-console-data";
 import { useToast } from "@/hooks/use-toast";
-import { fetchJson, streamAnswer } from "@/lib/api";
+import { fetchJson, streamAnswer, fetchAnswerTraces } from "@/lib/api";
 import { getErrorMessage } from "@/lib/console";
 import { hasIncompleteMarkdown, preprocessCitations } from "@/lib/streaming-parser";
 import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
 import { CitationCard } from "@/components/ui/citation-card";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { ToastContainer } from "@/components/ui/toast";
+import type { AnswerTrace } from "@/lib/api";
 
 type ChatTurn = {
   id: string;
@@ -73,7 +74,21 @@ export function ChatPage() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState("");
+  const [historyTraces, setHistoryTraces] = useState<AnswerTrace[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // Load conversation history on mount
+  useEffect(() => {
+    async function loadHistory() {
+      try {
+        const traces = await fetchAnswerTraces(data.selectedSpaceId || undefined);
+        setHistoryTraces(traces.slice(0, 10)); // Show last 10 conversations
+      } catch (error) {
+        console.error("Failed to load conversation history:", error);
+      }
+    }
+    loadHistory();
+  }, [data.selectedSpaceId]);
 
   function adjustTextareaHeight() {
     const textarea = textareaRef.current;
@@ -274,26 +289,37 @@ export function ChatPage() {
         <section className="chat-sidebar-card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ marginBottom: 0 }}>最近对话</h3>
-            {turns.length > 3 && (
+            {historyTraces.length > 3 && (
               <button className="mini-button" type="button" onClick={() => setShowAllHistory(!showAllHistory)}>
-                {showAllHistory ? "收起" : `全部 (${turns.length})`}
+                {showAllHistory ? "收起" : `全部 (${historyTraces.length})`}
               </button>
             )}
           </div>
           <div className="chat-history" style={{ marginTop: 12 }}>
-            {turns.length ? (
-              turns
+            {historyTraces.length ? (
+              historyTraces
                 .slice()
                 .reverse()
                 .slice(0, showAllHistory ? undefined : 3)
-                .map((turn) => (
-                  <div key={turn.id} className="chat-history-item">
-                    <strong>{turn.question}</strong>
-                    <div className="tiny">{turn.isStreaming ? "正在生成回答..." : `引用 ${turn.citations.length} 条`}</div>
+                .map((trace) => (
+                  <div
+                    key={trace.id}
+                    className="chat-history-item"
+                    onClick={() => {
+                      setQuestion(trace.question);
+                      // 可以选择是否自动提交历史问题
+                      // textareaRef.current?.focus();
+                    }}
+                    style={{ cursor: "pointer" }}
+                  >
+                    <strong>{trace.question}</strong>
+                    <div className="tiny">
+                      置信度 {Math.round(trace.confidence * 100)}% · 引用 {trace.citations.length} 条
+                    </div>
                   </div>
                 ))
             ) : (
-              <div className="tiny">还没有开始会话，先试一个研究问题。</div>
+              <div className="tiny">暂无历史对话</div>
             )}
           </div>
         </section>

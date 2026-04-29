@@ -110,3 +110,17 @@ export async function streamAnswer<TDone = unknown>(
     }
   }
 }
+
+export type AnswerTrace = {
+  id: string;
+  knowledge_space_id: string;
+  question: string;
+  answer: string;
+  confidence: number;
+  citations: StreamAnswerMeta["citations"];
+};
+
+export async function fetchAnswerTraces(knowledgeSpaceId?: string): Promise<AnswerTrace[]> {
+  const params = knowledgeSpaceId ? `?knowledge_space_id=${knowledgeSpaceId}` : "";
+  return fetchJson<{ traces: AnswerTrace[] }>(`/answer-traces${params}`).then((data) => data.traces ?? []);
+}
