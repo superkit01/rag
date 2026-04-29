@@ -53,6 +53,8 @@ export function ChatPage() {
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [docSearchQuery, setDocSearchQuery] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function adjustTextareaHeight() {
@@ -234,29 +236,37 @@ export function ChatPage() {
           </Link>
         </div>
 
-        <section className="chat-sidebar-card">
-          <h3>知识空间</h3>
-          <div className="field" style={{ marginTop: 0 }}>
-            <label>当前命名空间</label>
-            <select className="select" value={data.selectedSpaceId} onChange={(event) => data.setSelectedSpaceId(event.target.value)}>
-              <option value="">自动选择默认空间</option>
-              {data.spaces.map((space) => (
-                <option key={space.id} value={space.id}>
-                  {space.name}
-                </option>
-              ))}
-            </select>
-          </div>
-          <p style={{ marginTop: 12 }}>这里可以直接切换命名空间，并配合文档过滤缩小问答范围。</p>
+        <section className="chat-sidebar-card" style={{ padding: "12px 14px" }}>
+          <select
+            className="select"
+            value={data.selectedSpaceId}
+            onChange={(event) => data.setSelectedSpaceId(event.target.value)}
+            style={{ marginTop: 0 }}
+          >
+            <option value="">自动选择默认空间</option>
+            {data.spaces.map((space) => (
+              <option key={space.id} value={space.id}>
+                {space.name}
+              </option>
+            ))}
+          </select>
         </section>
 
         <section className="chat-sidebar-card">
-          <h3>最近对话</h3>
-          <div className="chat-history">
+          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
+            <h3 style={{ marginBottom: 0 }}>最近对话</h3>
+            {turns.length > 3 && (
+              <button className="mini-button" type="button" onClick={() => setShowAllHistory(!showAllHistory)}>
+                {showAllHistory ? "收起" : `全部 (${turns.length})`}
+              </button>
+            )}
+          </div>
+          <div className="chat-history" style={{ marginTop: 12 }}>
             {turns.length ? (
               turns
                 .slice()
                 .reverse()
+                .slice(0, showAllHistory ? undefined : 3)
                 .map((turn) => (
                   <div key={turn.id} className="chat-history-item">
                     <strong>{turn.question}</strong>
@@ -276,20 +286,33 @@ export function ChatPage() {
               清空
             </button>
           </div>
+          <input
+            className="input"
+            type="text"
+            placeholder="搜索文档..."
+            value={docSearchQuery}
+            onChange={(event) => setDocSearchQuery(event.target.value)}
+            style={{ marginTop: 12, fontSize: 13, padding: "8px 12px" }}
+          />
           <div className="chat-doc-list" style={{ marginTop: 12 }}>
-            {data.documents.map((document) => (
-              <button
-                key={document.id}
-                className={`chat-doc-button ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
-                type="button"
-                onClick={() => toggleDocumentSelection(document.id)}
-              >
-                <strong>{document.title}</strong>
-                <div className="tiny">
-                  {document.source_type} · {document.status}
-                </div>
-              </button>
-            ))}
+            {data.documents
+              .filter((doc) => !docSearchQuery || doc.title.toLowerCase().includes(docSearchQuery.toLowerCase()))
+              .map((document) => (
+                <button
+                  key={document.id}
+                  className={`chat-doc-button ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
+                  type="button"
+                  onClick={() => toggleDocumentSelection(document.id)}
+                >
+                  <strong>{document.title}</strong>
+                  <div className="tiny">
+                    {document.source_type} · {document.status}
+                  </div>
+                </button>
+              ))}
+            {docSearchQuery && !data.documents.filter((doc) => doc.title.toLowerCase().includes(docSearchQuery.toLowerCase())).length && (
+              <div className="tiny">没有匹配的文档。</div>
+            )}
           </div>
         </section>
       </aside>
