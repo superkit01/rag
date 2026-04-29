@@ -45,6 +45,7 @@ class AnswerTraceRead(BaseModel):
 
     id: str
     knowledge_space_id: str
+    session_id: str | None = None
     question: str
     answer: str
     confidence: float

@@ -1,4 +1,4 @@
-from app.models.entities import AnswerTrace, Chunk, Document, EvalCase, EvalRun, Feedback, IngestionJob, KnowledgeSpace
+from app.models.entities import AnswerTrace, Chunk, Document, EvalCase, EvalRun, Feedback, IngestionJob, KnowledgeSpace, Session
 
 __all__ = [
     "AnswerTrace",
@@ -9,5 +9,6 @@ __all__ = [
     "Feedback",
     "IngestionJob",
     "KnowledgeSpace",
+    "Session",
 ]
 
