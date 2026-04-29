@@ -1,5 +1,6 @@
 "use client";
 
+import React, { useMemo } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
@@ -10,11 +11,13 @@ import type { Citation } from "@/lib/types";
 interface MarkdownRendererProps {
   content: string;
   citations?: Citation[];
-  isStreaming?: boolean;
 }
 
-export function MarkdownRenderer({ content, citations = [], isStreaming = false }: MarkdownRendererProps) {
-  const citationMap = new Map(citations.map((c, i) => [i + 1, c]));
+export function MarkdownRenderer({ content, citations = [] }: MarkdownRendererProps) {
+  const citationMap = useMemo(
+    () => new Map(citations.map((c, i) => [i + 1, c])),
+    [citations]
+  );
 
   return (
     <ReactMarkdown
