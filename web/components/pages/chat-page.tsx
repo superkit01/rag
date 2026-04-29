@@ -4,9 +4,15 @@ import Link from "next/link";
 import { FormEvent, useState } from "react";
 
 import { useConsoleData } from "@/hooks/use-console-data";
+import { useToast } from "@/hooks/use-toast";
 import { fetchJson, streamAnswer } from "@/lib/api";
 import { getErrorMessage } from "@/lib/console";
+import { hasIncompleteMarkdown, preprocessCitations } from "@/lib/streaming-parser";
 import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
+import { CitationCard } from "@/components/ui/citation-card";
+import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
+import { DocumentSkeleton } from "@/components/ui/skeleton";
+import { ToastContainer } from "@/components/ui/toast";
 
 type ChatTurn = {
   id: string;
@@ -21,10 +27,12 @@ type ChatTurn = {
 
 export function ChatPage() {
   const data = useConsoleData();
+  const { showToast } = useToast();
   const [status, setStatus] = useState("");
   const [question, setQuestion] = useState("核心数据变更需要满足哪些前置条件？");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
+  const [renderedContent, setRenderedContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
@@ -87,24 +95,34 @@ export function ChatPage() {
           onDelta(delta) {
             setStreamingText((currentText) => {
               const nextText = currentText + delta;
+              const preprocessed = preprocessCitations(nextText);
+
+              if (!hasIncompleteMarkdown(preprocessed)) {
+                setRenderedContent(preprocessed);
+              }
+
               setTurns((current) =>
-                current.map((turn) => (turn.id === turnId ? { ...turn, answer: nextText } : turn))
+                current.map((turn) =>
+                  turn.id === turnId ? { ...turn, answer: preprocessed } : turn
+                )
               );
               return nextText;
             });
           },
           onDone(result) {
             setAnswer(result);
-            setStreamingText(result.answer);
+            const finalContent = preprocessCitations(result.answer);
+            setStreamingText(finalContent);
+            setRenderedContent(finalContent);
             setCitations(result.citations);
             setSourceDocuments(result.source_documents);
-            setStatus(`问答已完成，当前置信度 ${Math.round(result.confidence * 100)}%。`);
+            showToast(`问答已完成，当前置信度 ${Math.round(result.confidence * 100)}%`, "success");
             setTurns((current) =>
               current.map((turn) =>
                 turn.id === turnId
                   ? {
                       ...turn,
-                      answer: result.answer,
+                      answer: finalContent,
                       citations: result.citations,
                       sourceDocuments: result.source_documents,
                       confidence: result.confidence,
@@ -280,44 +298,31 @@ export function ChatPage() {
 
                 <div className="chat-message assistant">
                   <div className="chat-bubble">
-                    {turn.answer || "正在组织答案..."}
-                    {turn.isStreaming ? <span className="stream-cursor">▋</span> : null}
+                    {turn.isStreaming && (!turn.answer || hasIncompleteMarkdown(turn.answer)) ? (
+                      <>
+                        {turn.answer || "正在组织答案..."}
+                        <span className="stream-cursor">|</span>
+                      </>
+                    ) : (
+                      <MarkdownRenderer
+                        content={turn.answer}
+                        citations={turn.citations}
+                      />
+                    )}
                   </div>
                 </div>
 
-                {(turn.citations.length > 0 || turn.sourceDocuments.length > 0 || turn.answerTraceId) && (
+                {turn.citations.length > 0 && (
                   <div className="chat-message assistant">
                     <div className="chat-meta-card">
-                      {turn.answerTraceId ? <div className="tiny mono">问答追踪 ID: {turn.answerTraceId}</div> : null}
-                      {typeof turn.confidence === "number" ? (
-                        <div className="tiny" style={{ marginTop: 6 }}>
-                          当前置信度 {Math.round(turn.confidence * 100)}%
-                        </div>
-                      ) : null}
-                      {turn.sourceDocuments.length ? (
-                        <div className="chip-row" style={{ marginTop: 12 }}>
-                          {turn.sourceDocuments.map((source) => (
-                            <div className="chip" key={source.document_id}>
-                              {source.title}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                      {turn.citations.length ? (
-                        <div className="chat-citations">
-                          {turn.citations.map((citation) => (
-                            <div className="chat-citation" key={citation.citation_id}>
-                              <strong>
-                                {citation.document_title} · {citation.section_title}
-                              </strong>
-                              <div>{citation.quote}</div>
-                              <div className="tiny">
-                                fragment={citation.fragment_id} · score={citation.score.toFixed(3)}
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
+                      <div className="flex items-center justify-between mb-2">
+                        <h4 className="text-sm font-semibold">引用来源 ({turn.citations.length})</h4>
+                      </div>
+                      <div className="space-y-2">
+                        {turn.citations.map((citation, index) => (
+                          <CitationCard key={citation.citation_id} citation={citation} index={index + 1} />
+                        ))}
+                      </div>
                     </div>
                   </div>
                 )}
@@ -348,6 +353,7 @@ export function ChatPage() {
           </div>
         </section>
       </section>
+      <ToastContainer />
     </main>
   );
 }
