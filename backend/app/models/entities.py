@@ -95,6 +95,7 @@ class AnswerTrace(Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
     knowledge_space_id: Mapped[str] = mapped_column(ForeignKey("knowledge_spaces.id"), nullable=False)
+    session_id: Mapped[Optional[str]] = mapped_column(ForeignKey("sessions.id"), nullable=True, index=True)
     question: Mapped[str] = mapped_column(Text, nullable=False)
     answer: Mapped[str] = mapped_column(Text, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, default=0.0, nullable=False)
@@ -103,6 +104,18 @@ class AnswerTrace(Base):
     followup_queries: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     evidence_snapshot: Mapped[list[dict]] = mapped_column(JSON, default=list, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False)
+
+    session: Mapped[Optional["Session"]] = relationship(back_populates="traces")
+
+
+class Session(TimestampMixin, Base):
+    __tablename__ = "sessions"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    knowledge_space_id: Mapped[str] = mapped_column(ForeignKey("knowledge_spaces.id"), nullable=False, index=True)
+
+    traces: Mapped[list["AnswerTrace"]] = relationship(back_populates="session", cascade="all, delete-orphan")
 
 
 class Feedback(Base):
