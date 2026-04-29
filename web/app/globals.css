@@ -659,7 +659,7 @@ select {
 .stream-cursor {
   display: inline-block;
   margin-left: 2px;
-  animation: blink 1s steps(1) infinite;
+  animation: sway 1s ease-in-out infinite, blink 1s steps(1) infinite;
 }
 
 .chat-layout {
@@ -845,6 +845,11 @@ select {
   text-align: left;
 }
 
+.chat-message-group {
+  display: grid;
+  gap: 28px;
+}
+
 .chat-message {
   display: grid;
   gap: 10px;
@@ -861,28 +866,30 @@ select {
 .chat-bubble {
   max-width: min(760px, 100%);
   padding: 16px 18px;
-  border-radius: 22px;
+  border-radius: 16px;
   line-height: 1.8;
-  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.05);
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.08);
 }
 
 .chat-message.user .chat-bubble {
   background: linear-gradient(135deg, #1f2937, #111827);
   color: white;
   border-bottom-right-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.15);
 }
 
 .chat-message.assistant .chat-bubble {
   background: rgba(255, 255, 255, 0.94);
   border: 1px solid rgba(15, 23, 42, 0.08);
   border-bottom-left-radius: 8px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.06);
 }
 
 .chat-meta-card {
   max-width: min(760px, 100%);
   padding: 16px 18px;
   border: 1px solid rgba(22, 119, 255, 0.12);
-  border-radius: 18px;
+  border-radius: 16px;
   background: rgba(248, 251, 255, 0.95);
 }
 
@@ -958,6 +965,11 @@ select {
   border: 1px solid rgba(15, 23, 42, 0.08);
   background: rgba(255, 255, 255, 0.98);
   box-shadow: 0 24px 60px rgba(15, 23, 42, 0.18);
+}
+
+@keyframes sway {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(2px); }
 }
 
 @keyframes blink {
