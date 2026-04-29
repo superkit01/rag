@@ -6,7 +6,7 @@ import { motion } from "framer-motion";
 
 import { useConsoleData } from "@/hooks/use-console-data";
 import { useToast } from "@/hooks/use-toast";
-import { fetchJson, streamAnswer, fetchAnswerTraces } from "@/lib/api";
+import { fetchJson, streamAnswer, fetchAnswerTraces, fetchSessions, createSession, fetchSessionTraces, updateSession, type Session } from "@/lib/api";
 import { getErrorMessage } from "@/lib/console";
 import { hasIncompleteMarkdown, preprocessCitations } from "@/lib/streaming-parser";
 import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
@@ -17,6 +17,7 @@ import type { AnswerTrace } from "@/lib/api";
 
 type ChatTurn = {
   id: string;
+  session_id?: string;
   question: string;
   answer: string;
   citations: Citation[];
@@ -75,19 +76,21 @@ export function ChatPage() {
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState("");
   const [historyTraces, setHistoryTraces] = useState<AnswerTrace[]>([]);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<Session[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // Load conversation history on mount
+  // Load sessions on mount
   useEffect(() => {
-    async function loadHistory() {
+    async function loadSessions() {
       try {
-        const traces = await fetchAnswerTraces(data.selectedSpaceId || undefined);
-        setHistoryTraces(traces.slice(0, 10)); // Show last 10 conversations
+        const sessionList = await fetchSessions(data.selectedSpaceId || undefined);
+        setSessions(sessionList);
       } catch (error) {
-        console.error("Failed to load conversation history:", error);
+        console.error("Failed to load sessions:", error);
       }
     }
-    loadHistory();
+    loadSessions();
   }, [data.selectedSpaceId]);
 
   function adjustTextareaHeight() {
