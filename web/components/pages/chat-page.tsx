@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useState } from "react";
+import { FormEvent, useRef, useState } from "react";
+import { motion } from "framer-motion";
 
 import { useConsoleData } from "@/hooks/use-console-data";
 import { useToast } from "@/hooks/use-toast";
@@ -24,6 +25,19 @@ type ChatTurn = {
   isStreaming?: boolean;
 };
 
+function ProgressBar({ progress }: { progress: number }) {
+  return (
+    <div className="h-1 bg-gray-200 rounded-full overflow-hidden">
+      <motion.div
+        className="h-full bg-blue-500"
+        initial={{ width: 0 }}
+        animate={{ width: `${progress}%` }}
+        transition={{ ease: "easeOut" }}
+      />
+    </div>
+  );
+}
+
 export function ChatPage() {
   const data = useConsoleData();
   const { showToast } = useToast();
@@ -31,12 +45,22 @@ export function ChatPage() {
   const [question, setQuestion] = useState("核心数据变更需要满足哪些前置条件？");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
+  const [streamingProgress, setStreamingProgress] = useState(0);
+  const [streamingPhase, setStreamingPhase] = useState<"thinking" | "writing" | "done">("thinking");
   const [isStreaming, setIsStreaming] = useState(false);
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  function adjustTextareaHeight() {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
+  }
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -50,6 +74,8 @@ export function ChatPage() {
     try {
       setIsStreaming(true);
       setStreamingText("");
+      setStreamingProgress(0);
+      setStreamingPhase("thinking");
       setAnswer(null);
       setCitations([]);
       setSourceDocuments([]);
@@ -91,10 +117,16 @@ export function ChatPage() {
             );
           },
           onDelta(delta) {
-            setStreamingText((currentText) => currentText + delta);
-
             setStreamingText((currentText) => {
-              const preprocessed = preprocessCitations(currentText);
+              const nextText = currentText + delta;
+
+              // Update progress based on content length
+              setStreamingProgress(Math.min((nextText.length / 500) * 100, 95));
+              if (nextText.length > 50) {
+                setStreamingPhase("writing");
+              }
+
+              const preprocessed = preprocessCitations(nextText);
 
               if (!hasIncompleteMarkdown(preprocessed)) {
                 setTurns((current) =>
@@ -103,10 +135,12 @@ export function ChatPage() {
                   )
                 );
               }
-              return currentText;
+              return nextText;
             });
           },
           onDone(result) {
+            setStreamingProgress(100);
+            setStreamingPhase("done");
             setAnswer(result);
             const finalContent = preprocessCitations(result.answer);
             setStreamingText(finalContent);
@@ -294,6 +328,16 @@ export function ChatPage() {
                   <div className="chat-bubble">{turn.question}</div>
                 </div>
 
+                {turn.isStreaming && (
+                  <div className="mb-2">
+                    <ProgressBar progress={streamingProgress} />
+                    <p className="text-xs text-gray-500 mt-1">
+                      {streamingPhase === "thinking" && "正在思考..."}
+                      {streamingPhase === "writing" && "正在组织答案..."}
+                    </p>
+                  </div>
+                )}
+
                 <div className="chat-message assistant">
                   <div className="chat-bubble">
                     {turn.isStreaming && (!turn.answer || hasIncompleteMarkdown(turn.answer)) ? (
@@ -338,12 +382,34 @@ export function ChatPage() {
 
           <div className="chat-composer-wrap">
             <form className="chat-composer" onSubmit={handleAsk}>
-              <textarea value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="给知识库发一条消息，或要求它基于引用整理结论..." />
+              <textarea
+                ref={textareaRef}
+                value={question}
+                onChange={(event) => {
+                  setQuestion(event.target.value);
+                  adjustTextareaHeight();
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !event.shiftKey) {
+                    event.preventDefault();
+                    event.currentTarget.form?.requestSubmit();
+                  }
+                }}
+                placeholder="给知识库发一条消息，或要求它基于引用整理结论..."
+              />
               <div className="chat-composer-actions">
                 <div className="chat-composer-meta">
                   {selectedDocumentIds.length ? `已限定 ${selectedDocumentIds.length} 份文档` : "当前使用整个命名空间"}
+                  <span style={{ marginLeft: 8, fontSize: 12, color: question.length > 2000 ? "#ef4444" : "inherit" }}>
+                    {question.length}/2000
+                  </span>
                 </div>
-                <button className="button" type="submit" disabled={isStreaming}>
+                <button
+                  className="button"
+                  type="submit"
+                  disabled={isStreaming || !question.trim()}
+                  style={isStreaming || !question.trim() ? { opacity: 0.5, cursor: "default" } : undefined}
+                >
                   {isStreaming ? "生成中..." : "发送"}
                 </button>
               </div>
