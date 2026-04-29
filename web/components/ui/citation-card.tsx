@@ -30,10 +30,14 @@ export function CitationCard({ citation, index }: CitationCardProps) {
         onClick={() => setIsExpanded(!isExpanded)}
       >
         <div className="flex-1">
-          <p className="text-sm font-semibold">{citation.document_title}</p>
-          <p className="text-xs text-gray-600 mt-0.5">{citation.section_title}</p>
+          <p className="text-sm font-semibold">{citation.document_title || "未知文档"}</p>
+          <p className="text-xs text-gray-600 mt-0.5">{citation.section_title || ""}</p>
         </div>
-        <button className="text-gray-400 hover:text-gray-600">
+        <button
+          className="text-gray-400 hover:text-gray-600"
+          aria-expanded={isExpanded}
+          aria-label={isExpanded ? "收起引用详情" : "展开引用详情"}
+        >
           {isExpanded ? "−" : "+"}
         </button>
       </div>
@@ -47,7 +51,7 @@ export function CitationCard({ citation, index }: CitationCardProps) {
             className="overflow-hidden"
           >
             <p className="text-sm text-gray-700 mt-3 leading-relaxed">
-              {citation.quote}
+              {citation.quote || "暂无内容"}
             </p>
 
             <div className="flex items-center justify-between mt-3 pt-2 border-t border-gray-100">
@@ -56,13 +60,14 @@ export function CitationCard({ citation, index }: CitationCardProps) {
                   {citation.score >= 0.8 ? "高相关" : citation.score >= 0.5 ? "中相关" : "低相关"}
                 </span>
                 <span className="text-xs text-gray-500">
-                  fragment={citation.fragment_id}
+                  片段: {citation.fragment_id}
                 </span>
               </div>
 
               <Link
                 href={`/documents/${citation.document_id}`}
                 className="text-xs text-blue-600 hover:underline"
+                aria-label={`查看文档 ${citation.document_title || ""}`}
               >
                 查看完整文档 →
               </Link>
