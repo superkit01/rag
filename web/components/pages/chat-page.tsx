@@ -39,6 +39,23 @@ function ProgressBar({ progress }: { progress: number }) {
   );
 }
 
+function ConfidenceBar({ confidence }: { confidence: number }) {
+  const pct = Math.round(confidence * 100);
+  const color =
+    pct >= 80 ? "#0f9f6e" : pct >= 50 ? "#f59e0b" : "#ef4444";
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+        <span style={{ fontSize: 13, fontWeight: 600 }}>置信度</span>
+        <span style={{ fontSize: 13, color: "var(--muted)" }}>{pct}%</span>
+      </div>
+      <div style={{ height: 6, borderRadius: 3, background: "#e5e7eb", overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", borderRadius: 3, background: color, transition: "width 0.6s ease" }} />
+      </div>
+    </div>
+  );
+}
+
 export function ChatPage() {
   const data = useConsoleData();
   const { showToast } = useToast();
@@ -407,6 +424,7 @@ export function ChatPage() {
                           <CitationCard key={citation.citation_id} citation={citation} index={index + 1} />
                         ))}
                       </div>
+                      {turn.confidence != null && <ConfidenceBar confidence={turn.confidence} />}
                     </div>
                   </div>
                 )}
