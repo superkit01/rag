@@ -349,8 +349,14 @@ export function ChatPage() {
                 <h2>今天想先研究什么？</h2>
                 <p>可以直接提问，也可以用下面的提示词快速开始。系统会按当前知识空间与文档过滤条件给出带引用的回答。</p>
                 <div className="chat-suggestions">
-                  {suggestions.map((item) => (
-                    <button key={item} type="button" className="chat-suggestion" onClick={() => fillPrompt(item)}>
+                  {suggestions.map((item, index) => (
+                    <button
+                      key={item}
+                      type="button"
+                      className="chat-suggestion"
+                      style={{ "--index": index } as React.CSSProperties}
+                      onClick={() => fillPrompt(item)}
+                    >
                       {item}
                     </button>
                   ))}
