@@ -11,7 +11,7 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./infra/postgres/init:/docker-entrypoint-initdb.d
+      - ./backend/db:/docker-entrypoint-initdb.d
 
   redis:
     image: docker.m.daocloud.io/library/redis:7
