@@ -23,6 +23,7 @@ type ChatTurn = {
   confidence?: number;
   answerTraceId?: string;
   isStreaming?: boolean;
+  hasError?: boolean;
 };
 
 function ProgressBar({ progress }: { progress: number }) {
@@ -171,10 +172,14 @@ export function ChatPage() {
       setQuestion("");
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      showToast(errorMessage, "error");
+      showToast(`问答失败: ${errorMessage}，请重试。`, "error");
       setStatus(errorMessage);
       setTurns((current) =>
-        current.map((turn) => (turn.id === turnId ? { ...turn, answer: errorMessage, isStreaming: false } : turn))
+        current.map((turn) =>
+          turn.id === turnId
+            ? { ...turn, answer: errorMessage, isStreaming: false, hasError: true }
+            : turn
+        )
       );
     } finally {
       setIsStreaming(false);
@@ -211,6 +216,14 @@ export function ChatPage() {
 
   function fillPrompt(nextQuestion: string) {
     setQuestion(nextQuestion);
+  }
+
+  function handleRetry(questionToRetry: string) {
+    setQuestion(questionToRetry);
+    setTimeout(() => {
+      const form = document.querySelector<HTMLFormElement>(".chat-composer");
+      form?.requestSubmit();
+    }, 0);
   }
 
   const suggestions = [
@@ -389,6 +402,29 @@ export function ChatPage() {
                         ))}
                       </div>
                     </div>
+                  </div>
+                )}
+
+                {!turn.isStreaming && turn.citations.length === 0 && !turn.hasError && (
+                  <div className="chat-message assistant">
+                    <div className="chat-meta-card" style={{ borderColor: "rgba(245, 158, 11, 0.3)", background: "rgba(255, 251, 235, 0.95)" }}>
+                      <p style={{ margin: 0, color: "#92400e", fontSize: 14 }}>
+                        本次回答未引用任何文档来源，结论可能缺乏依据，建议调整问题或更换知识空间后重试。
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {turn.hasError && !turn.isStreaming && (
+                  <div className="chat-message assistant">
+                    <button
+                      className="button ghost"
+                      type="button"
+                      onClick={() => handleRetry(turn.question)}
+                      style={{ fontSize: 14 }}
+                    >
+                      重试此问题
+                    </button>
                   </div>
                 )}
               </div>
