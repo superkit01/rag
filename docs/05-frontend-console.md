@@ -57,6 +57,46 @@
 - 推荐追问
 - 答案反馈
 
+## Chat Page Features
+
+### Markdown Rendering
+- AI responses render with full markdown formatting
+- Code syntax highlighting via Prism
+- Streaming-safe incremental parsing
+
+### Inline Citations
+- Citation badges appear inline within responses
+- Hover for quick preview
+- Click to expand full citation card
+- Navigate to source documents
+
+### Streaming Feedback
+- Progress bar shows generation progress
+- Status text indicates current phase (thinking/writing)
+- Typing cursor with sway animation
+
+### Toast Notifications
+- Global toast system for operation feedback
+- Success/error/info states
+- Auto-dismiss with configurable duration
+
+### Input Enhancements
+- Auto-expanding textarea (max 240px height)
+- Character counter with warning at 2000 chars
+- Keyboard shortcuts (Enter to send, Shift+Enter for newline)
+- Disabled state during generation
+
+### Error Handling
+- Toast notifications for errors
+- Retry functionality for failed requests
+- Graceful handling of missing citations
+
+### Visual Improvements
+- Enhanced shadows and spacing
+- Consistent 16px border radius
+- Improved typography with better line-height
+- Responsive design for mobile devices
+
 ### Tasks
 
 包含两类任务：
