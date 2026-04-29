@@ -124,3 +124,43 @@ export async function fetchAnswerTraces(knowledgeSpaceId?: string): Promise<Answ
   const params = knowledgeSpaceId ? `?knowledge_space_id=${knowledgeSpaceId}` : "";
   return fetchJson<AnswerTrace[]>(`/answer-traces${params}`);
 }
+
+export type Session = {
+  id: string;
+  name: string;
+  knowledge_space_id: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SessionCreate = {
+  knowledge_space_id: string;
+  name?: string;
+};
+
+export type SessionUpdate = {
+  name?: string;
+};
+
+export async function fetchSessions(knowledgeSpaceId?: string): Promise<Session[]> {
+  const params = knowledgeSpaceId ? `?knowledge_space_id=${knowledgeSpaceId}` : "";
+  return fetchJson<Session[]>(`/sessions${params}`);
+}
+
+export async function createSession(payload: SessionCreate): Promise<Session> {
+  return fetchJson<Session>("/sessions", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+}
+
+export async function fetchSessionTraces(sessionId: string): Promise<AnswerTrace[]> {
+  return fetchJson<AnswerTrace[]>(`/sessions/${sessionId}/traces`);
+}
+
+export async function updateSession(sessionId: string, payload: SessionUpdate): Promise<Session> {
+  return fetchJson<Session>(`/sessions/${sessionId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+}
