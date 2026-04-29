@@ -60,7 +60,7 @@ export function ChatPage() {
   const data = useConsoleData();
   const { showToast } = useToast();
   const [status, setStatus] = useState("");
-  const [question, setQuestion] = useState("核心数据变更需要满足哪些前置条件？");
+  const [question, setQuestion] = useState("");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
   const [streamingProgress, setStreamingProgress] = useState(0);
@@ -231,10 +231,6 @@ export function ChatPage() {
     );
   }
 
-  function fillPrompt(nextQuestion: string) {
-    setQuestion(nextQuestion);
-  }
-
   function handleRetry(questionToRetry: string) {
     setQuestion(questionToRetry);
     setTimeout(() => {
@@ -242,13 +238,6 @@ export function ChatPage() {
       form?.requestSubmit();
     }, 0);
   }
-
-  const suggestions = [
-    "总结当前知识空间里与发布审批相关的硬性前置条件。",
-    "按文档出处整理核心数据变更的风险控制要求。",
-    "如果证据不足，请明确指出缺失了哪些制度或流程文档。",
-    "对比最近导入的文档里，哪些内容最适合做上线前检查清单？"
-  ];
 
   return (
     <main className="chat-layout">
@@ -364,20 +353,7 @@ export function ChatPage() {
             {!turns.length ? (
               <section className="chat-empty">
                 <h2>今天想先研究什么？</h2>
-                <p>可以直接提问，也可以用下面的提示词快速开始。系统会按当前知识空间与文档过滤条件给出带引用的回答。</p>
-                <div className="chat-suggestions">
-                  {suggestions.map((item, index) => (
-                    <button
-                      key={item}
-                      type="button"
-                      className="chat-suggestion"
-                      style={{ "--index": index } as React.CSSProperties}
-                      onClick={() => fillPrompt(item)}
-                    >
-                      {item}
-                    </button>
-                  ))}
-                </div>
+                <p>可以直接提问，系统会按当前知识空间与文档过滤条件给出带引用的回答。</p>
               </section>
             ) : null}
 
