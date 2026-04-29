@@ -11,7 +11,6 @@ import { hasIncompleteMarkdown, preprocessCitations } from "@/lib/streaming-pars
 import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
 import { CitationCard } from "@/components/ui/citation-card";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
-import { DocumentSkeleton } from "@/components/ui/skeleton";
 import { ToastContainer } from "@/components/ui/toast";
 
 type ChatTurn = {
@@ -32,7 +31,6 @@ export function ChatPage() {
   const [question, setQuestion] = useState("核心数据变更需要满足哪些前置条件？");
   const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [streamingText, setStreamingText] = useState("");
-  const [renderedContent, setRenderedContent] = useState("");
   const [isStreaming, setIsStreaming] = useState(false);
   const [answer, setAnswer] = useState<AnswerResponse | null>(null);
   const [citations, setCitations] = useState<Citation[]>([]);
@@ -93,27 +91,25 @@ export function ChatPage() {
             );
           },
           onDelta(delta) {
+            setStreamingText((currentText) => currentText + delta);
+
             setStreamingText((currentText) => {
-              const nextText = currentText + delta;
-              const preprocessed = preprocessCitations(nextText);
+              const preprocessed = preprocessCitations(currentText);
 
               if (!hasIncompleteMarkdown(preprocessed)) {
-                setRenderedContent(preprocessed);
+                setTurns((current) =>
+                  current.map((turn) =>
+                    turn.id === turnId ? { ...turn, answer: preprocessed } : turn
+                  )
+                );
               }
-
-              setTurns((current) =>
-                current.map((turn) =>
-                  turn.id === turnId ? { ...turn, answer: preprocessed } : turn
-                )
-              );
-              return nextText;
+              return currentText;
             });
           },
           onDone(result) {
             setAnswer(result);
             const finalContent = preprocessCitations(result.answer);
             setStreamingText(finalContent);
-            setRenderedContent(finalContent);
             setCitations(result.citations);
             setSourceDocuments(result.source_documents);
             showToast(`问答已完成，当前置信度 ${Math.round(result.confidence * 100)}%`, "success");
@@ -138,9 +134,11 @@ export function ChatPage() {
       await data.refreshCollections(data.selectedSpaceId || data.spaces[0]?.id || "");
       setQuestion("");
     } catch (error) {
-      setStatus(getErrorMessage(error));
+      const errorMessage = getErrorMessage(error);
+      showToast(errorMessage, "error");
+      setStatus(errorMessage);
       setTurns((current) =>
-        current.map((turn) => (turn.id === turnId ? { ...turn, answer: getErrorMessage(error), isStreaming: false } : turn))
+        current.map((turn) => (turn.id === turnId ? { ...turn, answer: errorMessage, isStreaming: false } : turn))
       );
     } finally {
       setIsStreaming(false);

@@ -15,14 +15,6 @@ export function hasIncompleteMarkdown(text: string): boolean {
 }
 
 export function preprocessCitations(text: string): string {
-  // Use unique delimiter that won't conflict with markdown
-  return text.replace(/\{\{cite:(\d+)\}\}/g, "__CITATION_OPEN__$1__CITATION_CLOSE__");
-}
-
-export function postprocessCitations(html: string, citations: any[]): string {
-  // Only replace our unique citation markers
-  return html.replace(
-    /__CITATION_OPEN__(\d+)__CITATION_CLOSE__/g,
-    (match, num) => `__CITATION_${num}__`
-  );
+  // Output final format directly, no need for postprocess
+  return text.replace(/\{\{cite:(\d+)\}\}/g, "__CITATION_$1__");
 }
