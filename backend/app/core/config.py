@@ -53,6 +53,7 @@ class Settings:
     temporal_connect_delay_seconds: float = float(os.getenv("TEMPORAL_CONNECT_DELAY_SECONDS", "1.0"))
     retrieval_top_k: int = int(os.getenv("RETRIEVAL_TOP_K", "50"))
     rerank_top_k: int = int(os.getenv("RERANK_TOP_K", "8"))
+    chat_context_turn_limit: int = int(os.getenv("CHAT_CONTEXT_TURN_LIMIT", "5"))
     chunk_size: int = int(os.getenv("CHUNK_SIZE", "700"))
     chunk_overlap: int = int(os.getenv("CHUNK_OVERLAP", "100"))
     embedding_dimensions: int = int(os.getenv("EMBEDDING_DIMENSIONS", "128"))

@@ -2,15 +2,17 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Iterator
+from datetime import UTC, datetime
 
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models.entities import AnswerTrace
+from app.models.entities import AnswerTrace, Session as ChatSession
 from app.schemas.queries import AnswerRequest, AnswerResponse, CitationRead, SourceDocumentRead
 from app.services.indexing import SearchBackend, SearchResult
 from app.services.ingestion import IngestionService
-from app.services.llm import AnswerGenerationProvider
+from app.services.llm import AnswerGenerationProvider, ConversationTurn
 from app.services.text_utils import shorten_text
 
 
@@ -32,7 +34,7 @@ class AnswerService:
         if context["insufficient_evidence"]:
             answer = self._build_conservative_answer()
         else:
-            answer = self.answer_provider.generate(request.question, context["reranked"])
+            answer = self.answer_provider.generate(request.question, context["reranked"], context["history"])
         return self._persist_response(db, context, request, answer)
 
     def stream_answer(self, db: Session, request: AnswerRequest) -> Iterator[dict]:
@@ -52,7 +54,7 @@ class AnswerService:
                 answer_parts.append(chunk)
                 yield {"event": "delta", "data": chunk}
         else:
-            for chunk in self.answer_provider.stream_generate(request.question, context["reranked"]):
+            for chunk in self.answer_provider.stream_generate(request.question, context["reranked"], context["history"]):
                 if not chunk:
                     continue
                 answer_parts.append(chunk)
@@ -61,7 +63,7 @@ class AnswerService:
         answer = "".join(answer_parts).strip()
         if not answer:
             answer = self._build_conservative_answer() if context["insufficient_evidence"] else self.answer_provider.generate(
-                request.question, context["reranked"]
+                request.question, context["reranked"], context["history"]
             )
         response = self._persist_response(db, context, request, answer)
         yield {"event": "done", "data": response.model_dump(mode="json")}
@@ -134,8 +136,11 @@ class AnswerService:
             knowledge_space_id=request.knowledge_space_id,
             knowledge_space_name=request.knowledge_space_name,
         )
+        chat_session = self._get_session(db, request.session_id, knowledge_space.id)
+        history = self._load_history(db, chat_session.id if chat_session else None)
+        retrieval_query = self.answer_provider.rewrite_query(request.question, history) if history else request.question
         results = self.search_backend.search(
-            query=request.question,
+            query=retrieval_query,
             knowledge_space_id=knowledge_space.id,
             document_ids=request.document_ids,
             top_k=self.settings.retrieval_top_k,
@@ -147,6 +152,9 @@ class AnswerService:
         insufficient_evidence = not reranked or confidence < 0.1
         return {
             "knowledge_space_id": knowledge_space.id,
+            "chat_session": chat_session,
+            "history": history,
+            "retrieval_query": retrieval_query,
             "reranked": reranked,
             "citations": citations,
             "source_documents": source_documents,
@@ -170,6 +178,10 @@ class AnswerService:
             evidence_snapshot=[self._serialize_result(item) for item in context["reranked"]],
         )
         db.add(trace)
+        db.flush()
+        if context["chat_session"] is not None:
+            context["chat_session"].updated_at = datetime.now(UTC)
+            self._maybe_update_session_title(db, context["chat_session"], trace)
         db.commit()
         db.refresh(trace)
 
@@ -184,6 +196,51 @@ class AnswerService:
 
     def _build_conservative_answer(self) -> str:
         return "当前可用证据不足以支持可靠回答。建议补充更相关的文档，或把问题缩小到具体制度、流程、日期或章节。"
+
+    def _get_session(self, db: Session, session_id: str | None, knowledge_space_id: str) -> ChatSession | None:
+        if not session_id:
+            return None
+        chat_session = db.get(ChatSession, session_id)
+        if chat_session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        if chat_session.knowledge_space_id != knowledge_space_id:
+            raise HTTPException(status_code=400, detail="Session does not belong to the selected knowledge space.")
+        return chat_session
+
+    def _load_history(self, db: Session, session_id: str | None) -> list[ConversationTurn]:
+        if not session_id:
+            return []
+        limit = max(0, self.settings.chat_context_turn_limit)
+        if limit == 0:
+            return []
+        traces = (
+            db.query(AnswerTrace)
+            .filter(AnswerTrace.session_id == session_id)
+            .order_by(AnswerTrace.created_at.desc())
+            .limit(limit)
+            .all()
+        )
+        traces.reverse()
+        return [ConversationTurn(question=item.question, answer=shorten_text(item.answer, 700)) for item in traces]
+
+    def _temporary_session_name(self, question: str) -> str:
+        stripped = " ".join(question.split())
+        if not stripped:
+            return "新对话"
+        return stripped[:20] + "..." if len(stripped) > 20 else stripped
+
+    def _can_update_session_title(self, chat_session: ChatSession, first_question: str) -> bool:
+        current = chat_session.name.strip()
+        return current in {"", "新对话", self._temporary_session_name(first_question)}
+
+    def _maybe_update_session_title(self, db: Session, chat_session: ChatSession, trace: AnswerTrace) -> None:
+        trace_count = db.query(AnswerTrace).filter(AnswerTrace.session_id == chat_session.id).count()
+        if trace_count != 1:
+            return
+        if not self._can_update_session_title(chat_session, trace.question):
+            return
+        generated = self.answer_provider.generate_session_title(trace.question, trace.answer)
+        chat_session.name = generated.strip() if generated and generated.strip() else self._temporary_session_name(trace.question)
 
     def _build_conservative_followups(self, question: str) -> list[str]:
         return [

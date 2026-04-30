@@ -31,6 +31,32 @@ class DeferredWorkflowOrchestrator:
         self.cancelled_workflows.append(workflow_id)
 
 
+class RecordingAnswerProvider:
+    def __init__(self) -> None:
+        self.generate_calls = []
+        self.stream_calls = []
+        self.rewrite_calls = []
+        self.title_calls = []
+
+    def generate(self, question, evidence, history=None):
+        self.generate_calls.append((question, evidence, history or []))
+        return f"回答: {question}"
+
+    def stream_generate(self, question, evidence, history=None):
+        self.stream_calls.append((question, evidence, history or []))
+        yield f"流式回答: {question}"
+
+    def rewrite_query(self, question, history):
+        self.rewrite_calls.append((question, history))
+        if history:
+            return " ".join([turn.question for turn in history] + [question])
+        return question
+
+    def generate_session_title(self, question, answer):
+        self.title_calls.append((question, answer))
+        return "核心数据上线要求"
+
+
 def make_client(tmp_path: Path, orchestrator: object | None = None) -> TestClient:
     settings = Settings(
         database_url=f"sqlite:///{tmp_path / 'test.db'}",
@@ -42,6 +68,13 @@ def make_client(tmp_path: Path, orchestrator: object | None = None) -> TestClien
     if orchestrator is not None:
         app.state.container.orchestrator = orchestrator
     return TestClient(app)
+
+
+def install_recording_answer_provider(client: TestClient) -> RecordingAnswerProvider:
+    provider = RecordingAnswerProvider()
+    client.app.state.container.answer_provider = provider
+    client.app.state.container.answer_service.answer_provider = provider
+    return provider
 
 
 def encoded_text_payload(content: str) -> str:
@@ -317,6 +350,161 @@ def test_grounded_answer_stream(tmp_path: Path) -> None:
         assert "event: delta" in body
         assert "event: done" in body
         assert "answer_trace_id" in body
+
+
+def test_session_title_is_refined_after_first_answer(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        provider = install_recording_answer_provider(client)
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": knowledge_space_id, "name": "新对话"},
+        ).json()
+
+        response = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+
+        assert response.status_code == 200
+        refreshed = client.get(f"/api/sessions/{session['id']}")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["name"] == "核心数据上线要求"
+        assert provider.title_calls == [("核心数据上线需要哪些前置条件？", "回答: 核心数据上线需要哪些前置条件？")]
+
+
+def test_session_history_is_used_for_followup_answer(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        provider = install_recording_answer_provider(client)
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": knowledge_space_id, "name": "新对话"},
+        ).json()
+
+        first = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+        assert first.status_code == 200
+
+        second = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "继续说一下风险",
+            },
+        )
+        assert second.status_code == 200
+
+        _, _, second_history = provider.generate_calls[-1]
+        assert [turn.question for turn in second_history] == ["核心数据上线需要哪些前置条件？"]
+        assert [turn.answer for turn in second_history] == ["回答: 核心数据上线需要哪些前置条件？"]
+        rewrite_question, rewrite_history = provider.rewrite_calls[-1]
+        assert rewrite_question == "继续说一下风险"
+        assert [turn.question for turn in rewrite_history] == ["核心数据上线需要哪些前置条件？"]
+
+
+def test_custom_session_title_is_not_overwritten(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        provider = install_recording_answer_provider(client)
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": knowledge_space_id, "name": "我的专题研究"},
+        ).json()
+
+        response = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+
+        assert response.status_code == 200
+        refreshed = client.get(f"/api/sessions/{session['id']}")
+        assert refreshed.json()["name"] == "我的专题研究"
+        assert provider.title_calls == []
+
+
+def test_answer_rejects_unknown_session(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        response = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": "00000000-0000-0000-0000-000000000000",
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Session not found"
+
+
+def test_answer_rejects_cross_space_session(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        other_space = client.post(
+            "/api/knowledge-spaces",
+            json={"name": "另一个空间", "description": "用于跨空间校验"},
+        ).json()
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": other_space["id"], "name": "新对话"},
+        ).json()
+
+        response = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "Session does not belong to the selected knowledge space."
+
+
+def test_streaming_answer_refines_session_title(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        provider = install_recording_answer_provider(client)
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": knowledge_space_id, "name": "新对话"},
+        ).json()
+
+        with client.stream(
+            "POST",
+            "/api/queries/answer/stream",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        ) as response:
+            assert response.status_code == 200
+            body = "".join(response.iter_text())
+
+        refreshed = client.get(f"/api/sessions/{session['id']}")
+        assert "event: done" in body
+        assert "answer_trace_id" in body
+        assert refreshed.json()["name"] == "核心数据上线要求"
+        assert provider.title_calls == [("核心数据上线需要哪些前置条件？", "流式回答: 核心数据上线需要哪些前置条件？")]
 
 
 def test_eval_run_reports_metrics(tmp_path: Path) -> None:

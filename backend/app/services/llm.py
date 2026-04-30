@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import hashlib
 import json
 import math
@@ -11,6 +12,12 @@ import httpx
 from app.core.config import Settings
 from app.services.indexing import SearchResult
 from app.services.text_utils import shorten_text, tokenize_text
+
+
+@dataclass(slots=True)
+class ConversationTurn:
+    question: str
+    answer: str
 
 
 class HashEmbeddingProvider:
@@ -93,23 +100,48 @@ class OpenAICompatibleEmbeddingProvider:
 
 class AnswerGenerationProvider(ABC):
     @abstractmethod
-    def generate(self, question: str, evidence: list[SearchResult]) -> str:
+    def generate(self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None) -> str:
         raise NotImplementedError
 
     @abstractmethod
-    def stream_generate(self, question: str, evidence: list[SearchResult]) -> Iterator[str]:
+    def stream_generate(
+        self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None
+    ) -> Iterator[str]:
         raise NotImplementedError
+
+    def rewrite_query(self, question: str, history: list[ConversationTurn]) -> str:
+        del history
+        return question
+
+    def generate_session_title(self, question: str, answer: str) -> str | None:
+        del question, answer
+        return None
 
 
 class HeuristicAnswerProvider(AnswerGenerationProvider):
-    def generate(self, question: str, evidence: list[SearchResult]) -> str:
+    def generate(self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None) -> str:
+        del history
         return self._compose_answer(question, evidence)
 
-    def stream_generate(self, question: str, evidence: list[SearchResult]) -> Iterator[str]:
+    def stream_generate(
+        self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None
+    ) -> Iterator[str]:
+        del history
         answer = self._compose_answer(question, evidence)
         chunk_size = 48
         for start in range(0, len(answer), chunk_size):
             yield answer[start : start + chunk_size]
+
+    def rewrite_query(self, question: str, history: list[ConversationTurn]) -> str:
+        recent_questions = [turn.question for turn in history[-3:] if turn.question.strip()]
+        return " ".join([*recent_questions, question]).strip() or question
+
+    def generate_session_title(self, question: str, answer: str) -> str | None:
+        del answer
+        stripped = " ".join(question.split())
+        if not stripped:
+            return None
+        return stripped[:20] + "..." if len(stripped) > 20 else stripped
 
     def _compose_answer(self, question: str, evidence: list[SearchResult]) -> str:
         if not evidence:
@@ -129,9 +161,9 @@ class OpenAICompatibleAnswerProvider(AnswerGenerationProvider):
         self.model = settings.openai_chat_model
         self.fallback = HeuristicAnswerProvider()
 
-    def generate(self, question: str, evidence: list[SearchResult]) -> str:
+    def generate(self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None) -> str:
         if not self.api_key or not self.model:
-            return self.fallback.generate(question, evidence)
+            return self.fallback.generate(question, evidence, history)
         payload = {
             "model": self.model,
             "temperature": 0.1,
@@ -142,7 +174,7 @@ class OpenAICompatibleAnswerProvider(AnswerGenerationProvider):
                 },
                 {
                     "role": "user",
-                    "content": self._build_prompt(question, evidence),
+                    "content": self._build_prompt(question, evidence, history or []),
                 },
             ],
         }
@@ -156,13 +188,15 @@ class OpenAICompatibleAnswerProvider(AnswerGenerationProvider):
             response.raise_for_status()
             data = response.json()
             content = data["choices"][0]["message"]["content"].strip()
-            return content or self.fallback.generate(question, evidence)
+            return content or self.fallback.generate(question, evidence, history)
         except Exception:
-            return self.fallback.generate(question, evidence)
+            return self.fallback.generate(question, evidence, history)
 
-    def stream_generate(self, question: str, evidence: list[SearchResult]) -> Iterator[str]:
+    def stream_generate(
+        self, question: str, evidence: list[SearchResult], history: list[ConversationTurn] | None = None
+    ) -> Iterator[str]:
         if not self.api_key or not self.model:
-            yield from self.fallback.stream_generate(question, evidence)
+            yield from self.fallback.stream_generate(question, evidence, history)
             return
 
         payload = {
@@ -176,7 +210,7 @@ class OpenAICompatibleAnswerProvider(AnswerGenerationProvider):
                 },
                 {
                     "role": "user",
-                    "content": self._build_prompt(question, evidence),
+                    "content": self._build_prompt(question, evidence, history or []),
                 },
             ],
         }
@@ -213,16 +247,100 @@ class OpenAICompatibleAnswerProvider(AnswerGenerationProvider):
         except Exception:
             pass
 
-        yield from self.fallback.stream_generate(question, evidence)
+        yield from self.fallback.stream_generate(question, evidence, history)
 
-    def _build_prompt(self, question: str, evidence: list[SearchResult]) -> str:
+    def rewrite_query(self, question: str, history: list[ConversationTurn]) -> str:
+        if not history:
+            return question
+        if not self.api_key or not self.model:
+            return self.fallback.rewrite_query(question, history)
+        rendered_history = self._render_history(history)
+        payload = {
+            "model": self.model,
+            "temperature": 0.0,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你负责把多轮追问改写成适合知识库检索的独立查询。只输出改写后的查询，不要解释。",
+                },
+                {
+                    "role": "user",
+                    "content": f"历史对话：\n{rendered_history}\n\n当前问题：{question}\n\n请输出一个简洁、完整、可检索的中文查询。",
+                },
+            ],
+        }
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            return content or self.fallback.rewrite_query(question, history)
+        except Exception:
+            return self.fallback.rewrite_query(question, history)
+
+    def generate_session_title(self, question: str, answer: str) -> str | None:
+        if not self.api_key or not self.model:
+            return self.fallback.generate_session_title(question, answer)
+        payload = {
+            "model": self.model,
+            "temperature": 0.0,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "你负责为企业知识库问答会话生成简短中文标题。只输出标题，不要解释。",
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"问题：{question}\n\n"
+                        f"答案摘要：{shorten_text(answer, 500)}\n\n"
+                        "请生成 8-20 个中文字符的标题，不要加引号，不要使用句号。"
+                    ),
+                },
+            ],
+        }
+        try:
+            response = httpx.post(
+                f"{self.base_url}/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json=payload,
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"].strip()
+            title = content.strip("「」“”\"' ，。；;：:")
+            return shorten_text(title, 24) if title else self.fallback.generate_session_title(question, answer)
+        except Exception:
+            return self.fallback.generate_session_title(question, answer)
+
+    def _build_prompt(self, question: str, evidence: list[SearchResult], history: list[ConversationTurn]) -> str:
+        rendered_history = self._render_history(history)
         rendered_evidence = "\n\n".join(
             [
                 f"[证据{i + 1}] 文档={item.document_title} 章节={' / '.join(item.heading_path)} 内容={item.content}"
                 for i, item in enumerate(evidence[:8])
             ]
         )
-        return f"问题：{question}\n\n证据：\n{rendered_evidence}\n\n请输出中文答案，优先给出结论，再说明证据不足之处。"
+        history_section = f"历史对话（只用于理解上下文，不作为证据）：\n{rendered_history}\n\n" if rendered_history else ""
+        return (
+            f"{history_section}"
+            f"当前问题：{question}\n\n"
+            f"证据：\n{rendered_evidence}\n\n"
+            "请输出中文答案，优先给出结论，再说明证据不足之处。引用依据只能来自本轮证据。"
+        )
+
+    def _render_history(self, history: list[ConversationTurn]) -> str:
+        return "\n".join(
+            [
+                f"用户：{turn.question}\n助手：{shorten_text(turn.answer, 700)}"
+                for turn in history
+                if turn.question.strip() or turn.answer.strip()
+            ]
+        )
 
 
 def build_answer_provider(settings: Settings) -> AnswerGenerationProvider:
