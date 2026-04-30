@@ -618,8 +618,7 @@ export function ChatPage() {
       <section className="chat-main">
         <header className="chat-main-header">
           <div>
-            <h1>Chat with your knowledge base</h1>
-            <p>独立于后台管理入口的研究对话页，保留流式回答、引用证据和知识空间上下文。</p>
+            <h1>知识库对话</h1>
           </div>
           <div className="chat-header-actions">
             {status ? <div className="chat-sidebar-card" style={{ padding: "12px 14px" }}>{status}</div> : null}

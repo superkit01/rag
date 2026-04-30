@@ -11,7 +11,7 @@ const NAV_ITEMS = [
   { href: "/documents", label: "文档" },
   { href: "/tasks", label: "任务" },
   { href: "/evaluation", label: "评测" },
-  { href: "/history", label: "历史问答" }
+  { href: "/history", label: "历史会话" }
 ];
 
 type ConsoleShellProps = {
