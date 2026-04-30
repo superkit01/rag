@@ -278,6 +278,7 @@ export function ChatPage() {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Load sessions on mount
   useEffect(() => {
@@ -299,19 +300,16 @@ export function ChatPage() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
   }
 
-  async function handleNewSession() {
-    try {
-      const newSession = await createSession({
-        knowledge_space_id: data.selectedSpaceId || data.spaces[0]?.id || ""
-      });
-      setCurrentSessionId(newSession.id);
-      setTurns([]);
-      setQuestion("");
-      setSessions((current) => [newSession, ...current]);
-      showToast("已创建新对话", "success");
-    } catch (error) {
-      showToast(`创建会话失败: ${getErrorMessage(error)}`, "error");
-    }
+  function handleNewSession() {
+    setCurrentSessionId(null);
+    setTurns([]);
+    setQuestion("");
+    setAnswer(null);
+    setCitations([]);
+    setSourceDocuments([]);
+    setFeedbackStatus("");
+    setStatus("");
+    showToast("已准备新对话，发送第一条消息后创建会话", "success");
   }
 
   function getRelativeTime(dateString: string): string {
@@ -331,6 +329,13 @@ export function ChatPage() {
   function generateSessionName(question: string): string {
     const truncated = question.length > 20 ? question.slice(0, 20) + "..." : question;
     return truncated;
+  }
+
+  function handleAbort() {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    setIsStreaming(false);
+    showToast("已中断回答", "info");
   }
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
@@ -359,6 +364,9 @@ export function ChatPage() {
     }
 
     const turnId = `${Date.now()}`;
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       setIsStreaming(true);
       setStreamingText("");
@@ -381,6 +389,9 @@ export function ChatPage() {
         }
       ]);
 
+      // Clear input immediately after sending
+      setQuestion("");
+
       await streamAnswer<AnswerResponse>(
         {
           question: currentQuestion,
@@ -399,6 +410,7 @@ export function ChatPage() {
                 turn.id === turnId
                   ? {
                       ...turn,
+                      answerTraceId: meta.answer_trace_id,
                       citations: meta.citations,
                       sourceDocuments: meta.source_documents
                     }
@@ -462,23 +474,35 @@ export function ChatPage() {
               )
             );
           }
-        }
+        },
+        abortController.signal
       );
       await data.refreshCollections(data.selectedSpaceId || data.spaces[0]?.id || "");
-      setQuestion("");
     } catch (error) {
       const errorMessage = getErrorMessage(error);
-      showToast(`问答失败: ${errorMessage}，请重试。`, "error");
-      setStatus(errorMessage);
-      setTurns((current) =>
-        current.map((turn) =>
-          turn.id === turnId
-            ? { ...turn, answer: errorMessage, isStreaming: false, hasError: true }
-            : turn
-        )
-      );
+      if (error instanceof Error && error.name === 'AbortError') {
+        showToast("已中断回答", "info");
+        setTurns((current) =>
+          current.map((turn) =>
+            turn.id === turnId
+              ? { ...turn, isStreaming: false }
+              : turn
+          )
+        );
+      } else {
+        showToast(`问答失败: ${errorMessage}，请重试。`, "error");
+        setStatus(errorMessage);
+        setTurns((current) =>
+          current.map((turn) =>
+            turn.id === turnId
+              ? { ...turn, answer: errorMessage, isStreaming: false, hasError: true }
+              : turn
+          )
+        );
+      }
     } finally {
       setIsStreaming(false);
+      abortControllerRef.current = null;
     }
   }
 
@@ -651,43 +675,47 @@ export function ChatPage() {
                   </div>
                 )}
 
-                <div className="chat-message assistant">
-                  <div className="chat-bubble">
-                    {turn.isStreaming && (!turn.answer || hasIncompleteMarkdown(turn.answer)) ? (
-                      <>
-                        {turn.answer || "正在组织答案..."}
-                        <span className="stream-cursor">|</span>
-                      </>
-                    ) : (
-                      <MarkdownRenderer
-                        content={turn.answer}
-                        citations={turn.citations}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {turn.citations.length > 0 && (
-                  <div className="chat-message assistant">
-                    <div className="chat-meta-card">
-                      <div className="flex items-center justify-between mb-2">
-                        <h4 className="text-sm font-semibold">引用来源 ({turn.citations.length})</h4>
+                {turn.answer || turn.isStreaming ? (
+                  <>
+                    <div className="chat-message assistant">
+                      <div className="chat-bubble">
+                        {turn.isStreaming && (!turn.answer || hasIncompleteMarkdown(turn.answer)) ? (
+                          <>
+                            {turn.answer || "正在组织答案..."}
+                            <span className="stream-cursor">|</span>
+                          </>
+                        ) : (
+                          <MarkdownRenderer
+                            content={turn.answer}
+                            citations={turn.citations}
+                          />
+                        )}
                       </div>
-                      <CitationSourceList citations={turn.citations} onOpenDocument={setActiveCitationSource} />
-                      {turn.confidence != null && <ConfidenceBar confidence={turn.confidence} />}
                     </div>
-                  </div>
-                )}
 
-                {!turn.isStreaming && turn.citations.length === 0 && !turn.hasError && (
-                  <div className="chat-message assistant">
-                    <div className="chat-meta-card" style={{ borderColor: "rgba(245, 158, 11, 0.3)", background: "rgba(255, 251, 235, 0.95)" }}>
-                      <p style={{ margin: 0, color: "#92400e", fontSize: 14 }}>
-                        本次回答未引用任何文档来源，结论可能缺乏依据，建议调整问题或更换知识空间后重试。
-                      </p>
-                    </div>
-                  </div>
-                )}
+                    {turn.citations.length > 0 && (
+                      <div className="chat-message assistant">
+                        <div className="chat-meta-card">
+                          <div className="flex items-center justify-between mb-2">
+                            <h4 className="text-sm font-semibold">引用来源 ({turn.citations.length})</h4>
+                          </div>
+                          <CitationSourceList citations={turn.citations} onOpenDocument={setActiveCitationSource} />
+                          {turn.confidence != null && <ConfidenceBar confidence={turn.confidence} />}
+                        </div>
+                      </div>
+                    )}
+
+                    {!turn.isStreaming && turn.citations.length === 0 && !turn.hasError && (
+                      <div className="chat-message assistant">
+                        <div className="chat-meta-card" style={{ borderColor: "rgba(245, 158, 11, 0.3)", background: "rgba(255, 251, 235, 0.95)" }}>
+                          <p style={{ margin: 0, color: "#92400e", fontSize: 14 }}>
+                            本次回答未引用任何文档来源，结论可能缺乏依据，建议调整问题或更换知识空间后重试。
+                          </p>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : null}
 
                 {turn.hasError && !turn.isStreaming && (
                   <div className="chat-message assistant">
@@ -737,14 +765,42 @@ export function ChatPage() {
                     {question.length}/2000
                   </span>
                 </div>
-                <button
-                  className="button"
-                  type="submit"
-                  disabled={isStreaming || !question.trim()}
-                  style={isStreaming || !question.trim() ? { opacity: 0.5, cursor: "default" } : undefined}
-                >
-                  {isStreaming ? "生成中..." : "发送"}
-                </button>
+                {isStreaming ? (
+                  <button
+                    className="button"
+                    type="button"
+                    onClick={handleAbort}
+                    style={{ backgroundColor: "#ef4444", width: 42, height: 42, padding: 0, display: "flex", alignItems: "center", justifyContent: "center", borderRadius: 8, boxSizing: "border-box" }}
+                    aria-label="停止"
+                  >
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="5" y="5" width="14" height="14" rx="2" />
+                    </svg>
+                  </button>
+                ) : (
+                  <button
+                    className="button"
+                    type="submit"
+                    disabled={!question.trim()}
+                    style={{
+                      width: 42,
+                      height: 42,
+                      padding: 0,
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      borderRadius: 8,
+                      boxSizing: "border-box",
+                      ...(question.trim() ? {} : { opacity: 0.5, cursor: "default" })
+                    }}
+                    aria-label="发送"
+                  >
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" xmlns="http://www.w3.org/2000/svg">
+                      <path d="M22 2L11 13" />
+                      <path d="M22 2L15 22L11 13L2 9L22 2Z" />
+                    </svg>
+                  </button>
+                )}
               </div>
             </form>
           </div>

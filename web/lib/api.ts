@@ -1,6 +1,6 @@
 import { SourceDocument } from "./types";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost-8000/api";
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -29,6 +29,7 @@ export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T>
 }
 
 type StreamAnswerMeta = {
+  answer_trace_id: string;
   confidence: number;
   citations: Array<{
     citation_id: string;
@@ -56,7 +57,8 @@ type StreamAnswerHandlers<TDone> = {
 
 export async function streamAnswer<TDone = unknown>(
   payload: Record<string, unknown>,
-  handlers: StreamAnswerHandlers<TDone>
+  handlers: StreamAnswerHandlers<TDone>,
+  signal?: AbortSignal
 ) {
   const response = await fetch(`${API_BASE_URL}/queries/answer/stream`, {
     method: "POST",
@@ -64,7 +66,8 @@ export async function streamAnswer<TDone = unknown>(
       "Content-Type": "application/json"
     },
     body: JSON.stringify(payload),
-    cache: "no-store"
+    cache: "no-store",
+    signal
   });
 
   if (!response.ok) {

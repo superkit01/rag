@@ -39,9 +39,28 @@ class AnswerService:
 
     def stream_answer(self, db: Session, request: AnswerRequest) -> Iterator[dict]:
         context = self._prepare_answer_context(db, request)
+
+        # Create trace immediately with question only, in case of client disconnect
+        trace = AnswerTrace(
+            knowledge_space_id=context["knowledge_space_id"],
+            session_id=request.session_id,
+            question=request.question,
+            answer="",  # Will be updated incrementally
+            confidence=context["confidence"],
+            citations=[item.model_dump() for item in context["citations"]],
+            source_documents=[item.model_dump() for item in context["source_documents"]],
+            followup_queries=context["followup_queries"],
+            evidence_snapshot=[self._serialize_result(item) for item in context["reranked"]],
+        )
+        db.add(trace)
+        db.commit()  # Commit immediately to persist the question
+        db.refresh(trace)  # Refresh to get the generated ID and timestamps
+        trace_id = trace.id
+
         yield {
             "event": "meta",
             "data": {
+                "answer_trace_id": trace_id,
                 "confidence": context["confidence"],
                 "citations": [item.model_dump(mode="json") for item in context["citations"]],
                 "source_documents": [item.model_dump(mode="json") for item in context["source_documents"]],
@@ -49,24 +68,74 @@ class AnswerService:
         }
 
         answer_parts: list[str] = []
-        if context["insufficient_evidence"]:
-            for chunk in self._stream_text(self._build_conservative_answer()):
-                answer_parts.append(chunk)
-                yield {"event": "delta", "data": chunk}
-        else:
-            for chunk in self.answer_provider.stream_generate(request.question, context["reranked"], context["history"]):
-                if not chunk:
-                    continue
-                answer_parts.append(chunk)
-                yield {"event": "delta", "data": chunk}
+        chunk_count = 0
+        save_interval = 10  # Save every 10 chunks to avoid too many DB writes
 
-        answer = "".join(answer_parts).strip()
-        if not answer:
-            answer = self._build_conservative_answer() if context["insufficient_evidence"] else self.answer_provider.generate(
-                request.question, context["reranked"], context["history"]
+        try:
+            if context["insufficient_evidence"]:
+                for chunk in self._stream_text(self._build_conservative_answer()):
+                    answer_parts.append(chunk)
+                    chunk_count += 1
+                    yield {"event": "delta", "data": chunk}
+
+                    # Periodically save partial answer
+                    if chunk_count % save_interval == 0:
+                        partial_answer = "".join(answer_parts)
+                        trace = db.get(AnswerTrace, trace_id)
+                        if trace:
+                            trace.answer = partial_answer
+                            db.commit()
+            else:
+                for chunk in self.answer_provider.stream_generate(request.question, context["reranked"], context["history"]):
+                    if not chunk:
+                        continue
+                    answer_parts.append(chunk)
+                    chunk_count += 1
+                    yield {"event": "delta", "data": chunk}
+
+                    # Periodically save partial answer
+                    if chunk_count % save_interval == 0:
+                        partial_answer = "".join(answer_parts)
+                        trace = db.get(AnswerTrace, trace_id)
+                        if trace:
+                            trace.answer = partial_answer
+                            db.commit()
+
+            answer = "".join(answer_parts).strip()
+            if not answer:
+                answer = self._build_conservative_answer() if context["insufficient_evidence"] else self.answer_provider.generate(
+                    request.question, context["reranked"], context["history"]
+                )
+
+            # Save final answer
+            trace = db.get(AnswerTrace, trace_id)
+            if trace:
+                trace.answer = answer
+                if context["chat_session"] is not None:
+                    context["chat_session"].updated_at = datetime.now(UTC)
+                    self._maybe_update_session_title(db, context["chat_session"], trace)
+                db.commit()
+                db.refresh(trace)
+
+            response = AnswerResponse(
+                answer_trace_id=trace.id,
+                answer=trace.answer,
+                citations=context["citations"],
+                confidence=trace.confidence,
+                source_documents=context["source_documents"],
+                followup_queries=context["followup_queries"],
             )
-        response = self._persist_response(db, context, request, answer)
-        yield {"event": "done", "data": response.model_dump(mode="json")}
+            yield {"event": "done", "data": response.model_dump(mode="json")}
+
+        except Exception:
+            # Save whatever was generated before the error/disconnect
+            if answer_parts:
+                partial_answer = "".join(answer_parts).strip()
+                trace = db.get(AnswerTrace, trace_id)
+                if trace and not trace.answer:
+                    trace.answer = partial_answer
+                    db.commit()
+            raise
 
     def list_traces(self, db: Session, knowledge_space_id: str | None = None, limit: int = 20) -> list[AnswerTrace]:
         query = db.query(AnswerTrace).order_by(AnswerTrace.created_at.desc())
