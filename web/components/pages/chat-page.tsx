@@ -100,6 +100,21 @@ export function ChatPage() {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 240)}px`;
   }
 
+  async function handleNewSession() {
+    try {
+      const newSession = await createSession({
+        knowledge_space_id: data.selectedSpaceId || data.spaces[0]?.id || ""
+      });
+      setCurrentSessionId(newSession.id);
+      setTurns([]);
+      setQuestion("");
+      setSessions((current) => [newSession, ...current]);
+      showToast("已创建新对话", "success");
+    } catch (error) {
+      showToast(`创建会话失败: ${getErrorMessage(error)}`, "error");
+    }
+  }
+
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const currentQuestion = question.trim();
@@ -291,12 +306,15 @@ export function ChatPage() {
 
         <section className="chat-sidebar-card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ marginBottom: 0 }}>最近对话</h3>
-            {historyTraces.length > 3 && (
-              <button className="mini-button" type="button" onClick={() => setShowAllHistory(!showAllHistory)}>
-                {showAllHistory ? "收起" : `全部 (${historyTraces.length})`}
-              </button>
-            )}
+            <h3 style={{ marginBottom: 0 }}>历史会话</h3>
+            <button
+              className="mini-button"
+              type="button"
+              onClick={handleNewSession}
+              disabled={isStreaming}
+            >
+              新建对话
+            </button>
           </div>
           <div className="chat-history" style={{ marginTop: 12 }}>
             {historyTraces.length ? (
