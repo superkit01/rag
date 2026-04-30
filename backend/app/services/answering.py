@@ -231,7 +231,7 @@ class AnswerService:
 
     def _can_update_session_title(self, chat_session: ChatSession, first_question: str) -> bool:
         current = chat_session.name.strip()
-        return current in {"", "新对话", self._temporary_session_name(first_question)}
+        return current in {"", "新对话", "新会话", self._temporary_session_name(first_question)}
 
     def _maybe_update_session_title(self, db: Session, chat_session: ChatSession, trace: AnswerTrace) -> None:
         trace_count = db.query(AnswerTrace).filter(AnswerTrace.session_id == chat_session.id).count()

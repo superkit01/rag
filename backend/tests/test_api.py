@@ -377,6 +377,31 @@ def test_session_title_is_refined_after_first_answer(tmp_path: Path) -> None:
         assert provider.title_calls == [("核心数据上线需要哪些前置条件？", "回答: 核心数据上线需要哪些前置条件？")]
 
 
+def test_legacy_new_session_title_is_refined_after_first_answer(tmp_path: Path) -> None:
+    with make_client(tmp_path) as client:
+        knowledge_space_id, _ = seed_document(client, tmp_path)
+        provider = install_recording_answer_provider(client)
+        session = client.post(
+            "/api/sessions",
+            json={"knowledge_space_id": knowledge_space_id, "name": "新会话"},
+        ).json()
+
+        response = client.post(
+            "/api/queries/answer",
+            json={
+                "knowledge_space_id": knowledge_space_id,
+                "session_id": session["id"],
+                "question": "核心数据上线需要哪些前置条件？",
+            },
+        )
+
+        assert response.status_code == 200
+        refreshed = client.get(f"/api/sessions/{session['id']}")
+        assert refreshed.status_code == 200
+        assert refreshed.json()["name"] == "核心数据上线要求"
+        assert provider.title_calls == [("核心数据上线需要哪些前置条件？", "回答: 核心数据上线需要哪些前置条件？")]
+
+
 def test_session_history_is_used_for_followup_answer(tmp_path: Path) -> None:
     with make_client(tmp_path) as client:
         knowledge_space_id, _ = seed_document(client, tmp_path)
