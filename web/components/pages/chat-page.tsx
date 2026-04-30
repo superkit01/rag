@@ -6,11 +6,11 @@ import { motion } from "framer-motion";
 
 import { useConsoleData } from "@/hooks/use-console-data";
 import { useToast } from "@/hooks/use-toast";
-import { fetchJson, streamAnswer, fetchAnswerTraces, fetchSessions, createSession, fetchSessionTraces, updateSession, type Session } from "@/lib/api";
+import { fetchJson, streamAnswer, fetchSessions, createSession, fetchSessionTraces, updateSession, type Session } from "@/lib/api";
+import { groupCitationsByDocument, type CitationDocumentGroup } from "@/lib/chat-ui";
 import { getErrorMessage } from "@/lib/console";
 import { hasIncompleteMarkdown, preprocessCitations } from "@/lib/streaming-parser";
-import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from "@/lib/types";
-import { CitationCard } from "@/components/ui/citation-card";
+import type { AnswerResponse, Citation, DocumentListItem, DocumentRead, FeedbackResponse, SourceDocument } from "@/lib/types";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { ToastContainer } from "@/components/ui/toast";
 
@@ -57,6 +57,206 @@ function ConfidenceBar({ confidence }: { confidence: number }) {
   );
 }
 
+type DocumentFilterDialogProps = {
+  documents: DocumentListItem[];
+  isOpen: boolean;
+  isStreaming: boolean;
+  query: string;
+  selectedDocumentIds: string[];
+  onClose: () => void;
+  onQueryChange: (value: string) => void;
+  onClear: () => void;
+  onToggleDocument: (documentId: string) => void;
+};
+
+function DocumentFilterDialog({
+  documents,
+  isOpen,
+  isStreaming,
+  query,
+  selectedDocumentIds,
+  onClose,
+  onQueryChange,
+  onClear,
+  onToggleDocument
+}: DocumentFilterDialogProps) {
+  if (!isOpen) return null;
+
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredDocuments = documents.filter((doc) => !normalizedQuery || doc.title.toLowerCase().includes(normalizedQuery));
+
+  return (
+    <div className="chat-modal-backdrop" onClick={onClose}>
+      <section className="chat-document-modal" role="dialog" aria-modal="true" aria-labelledby="chat-document-filter-title" onClick={(event) => event.stopPropagation()}>
+        <div className="chat-modal-header">
+          <div>
+            <h2 id="chat-document-filter-title">文档过滤</h2>
+            <p>选择本轮问答限定使用的文档范围。</p>
+          </div>
+          <button className="chat-icon-button" type="button" onClick={onClose} aria-label="关闭文档过滤">
+            ×
+          </button>
+        </div>
+
+        <input
+          className="input"
+          type="text"
+          placeholder="搜索文档..."
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+          autoFocus
+        />
+
+        <div className="chat-document-filter-summary">
+          <span>{selectedDocumentIds.length ? `已选择 ${selectedDocumentIds.length} 份文档` : "未选择文档，将使用整个命名空间"}</span>
+          <button className="mini-button" type="button" onClick={onClear} disabled={isStreaming || selectedDocumentIds.length === 0}>
+            清空
+          </button>
+        </div>
+
+        <div className="chat-doc-list modal-list">
+          {filteredDocuments.map((document) => (
+            <button
+              key={document.id}
+              className={`chat-doc-button ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
+              type="button"
+              onClick={() => onToggleDocument(document.id)}
+              disabled={isStreaming}
+            >
+              <strong>{document.title}</strong>
+              <div className="tiny">
+                {document.source_type} · {document.status}
+              </div>
+            </button>
+          ))}
+          {normalizedQuery && !filteredDocuments.length ? <div className="tiny">没有匹配的文档。</div> : null}
+          {!documents.length ? <div className="tiny">当前知识空间暂无可过滤文档。</div> : null}
+        </div>
+
+        <div className="chat-modal-actions">
+          <button className="button ghost" type="button" onClick={onClose}>
+            取消
+          </button>
+          <button className="button" type="button" onClick={onClose}>
+            确认
+          </button>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function CitationSourceList({ citations, onOpenDocument }: { citations: Citation[]; onOpenDocument: (group: CitationDocumentGroup) => void }) {
+  const groups = groupCitationsByDocument(citations);
+
+  return (
+    <div className="chat-source-list">
+      {groups.map((group) => (
+        <button key={group.documentId} className="chat-source-chip" type="button" onClick={() => onOpenDocument(group)}>
+          <span className="chat-source-filetype">{group.fileType}</span>
+          <span className="chat-source-title">{group.title}</span>
+          {group.citations.length > 1 ? <span className="chat-source-count">{group.citations.length}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function DocumentDrawer({ source, onClose }: { source: CitationDocumentGroup | null; onClose: () => void }) {
+  const [documentDetail, setDocumentDetail] = useState<DocumentRead | null>(null);
+  const [status, setStatus] = useState<"idle" | "loading" | "loaded" | "error">("idle");
+  const [errorMessage, setErrorMessage] = useState("");
+
+  useEffect(() => {
+    if (!source) {
+      setDocumentDetail(null);
+      setStatus("idle");
+      setErrorMessage("");
+      return;
+    }
+
+    let isCurrent = true;
+    setStatus("loading");
+    setErrorMessage("");
+    setDocumentDetail(null);
+
+    fetchJson<DocumentRead>(`/documents/${source.documentId}`)
+      .then((result) => {
+        if (!isCurrent) return;
+        setDocumentDetail(result);
+        setStatus("loaded");
+      })
+      .catch((error) => {
+        if (!isCurrent) return;
+        setErrorMessage(getErrorMessage(error));
+        setStatus("error");
+      });
+
+    return () => {
+      isCurrent = false;
+    };
+  }, [source]);
+
+  if (!source) return null;
+
+  return (
+    <div className="chat-drawer-layer">
+      <button className="chat-drawer-scrim" type="button" aria-label="关闭文档抽屉" onClick={onClose} />
+      <aside className="chat-document-drawer" aria-label="引用文档内容">
+        <div className="chat-drawer-header">
+          <div>
+            <div className="chat-source-filetype">{source.fileType}</div>
+            <h2>{documentDetail?.title || source.title}</h2>
+            <p>
+              {documentDetail ? `${documentDetail.source_type} · ${documentDetail.status}` : `${source.citations.length} 个引用片段`}
+            </p>
+          </div>
+          <button className="chat-icon-button" type="button" onClick={onClose} aria-label="关闭文档内容">
+            ×
+          </button>
+        </div>
+
+        <div className="chat-drawer-body">
+          <section className="chat-drawer-section">
+            <h3>本次命中片段</h3>
+            <div className="chat-hit-list">
+              {source.citations.map((citation, index) => (
+                <article className="chat-hit-card" key={citation.citation_id}>
+                  <div className="tiny">
+                    #{index + 1} · {citation.section_title || "未命名章节"}
+                    {citation.page_number != null ? ` · 第 ${citation.page_number} 页` : ""}
+                  </div>
+                  <p>{citation.quote || "暂无引用文本"}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+
+          <section className="chat-drawer-section">
+            <h3>文档内容</h3>
+            {status === "loading" ? <div className="tiny">正在加载文档内容...</div> : null}
+            {status === "error" ? <div className="chat-drawer-error">{errorMessage}</div> : null}
+            {status === "loaded" && documentDetail ? (
+              <div className="chat-chunk-list">
+                {documentDetail.chunks.map((chunk) => (
+                  <article className="chat-chunk-card" key={chunk.id}>
+                    <div className="tiny">
+                      {chunk.section_title || chunk.fragment_id}
+                      {chunk.page_number != null ? ` · 第 ${chunk.page_number} 页` : ""}
+                    </div>
+                    <p>{chunk.content}</p>
+                  </article>
+                ))}
+                {!documentDetail.chunks.length ? <div className="tiny">该文档暂无切片内容。</div> : null}
+              </div>
+            ) : null}
+          </section>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
 export function ChatPage() {
   const data = useConsoleData();
   const { showToast } = useToast();
@@ -72,8 +272,9 @@ export function ChatPage() {
   const [sourceDocuments, setSourceDocuments] = useState<SourceDocument[]>([]);
   const [feedbackStatus, setFeedbackStatus] = useState("");
   const [turns, setTurns] = useState<ChatTurn[]>([]);
-  const [showAllHistory, setShowAllHistory] = useState(false);
+  const [isDocumentFilterOpen, setIsDocumentFilterOpen] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState("");
+  const [activeCitationSource, setActiveCitationSource] = useState<CitationDocumentGroup | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -349,7 +550,7 @@ export function ChatPage() {
           </select>
         </section>
 
-        <section className="chat-sidebar-card">
+        <section className="chat-sidebar-card chat-history-card">
           <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
             <h3 style={{ marginBottom: 0 }}>历史会话</h3>
             <button
@@ -365,7 +566,6 @@ export function ChatPage() {
             {sessions.length ? (
               sessions
                 .slice()
-                .slice(0, showAllHistory ? undefined : 3)
                 .map((session) => (
                   <div
                     key={session.id}
@@ -404,41 +604,14 @@ export function ChatPage() {
           </div>
         </section>
 
-        <section className="chat-sidebar-card">
-          <div className="row" style={{ justifyContent: "space-between", alignItems: "center" }}>
-            <h3 style={{ marginBottom: 0 }}>文档过滤</h3>
-            <button className="mini-button" type="button" onClick={() => setSelectedDocumentIds([])} disabled={isStreaming}>
-              清空
-            </button>
-          </div>
-          <input
-            className="input"
-            type="text"
-            placeholder="搜索文档..."
-            value={docSearchQuery}
-            onChange={(event) => setDocSearchQuery(event.target.value)}
-            style={{ marginTop: 12, fontSize: 13, padding: "8px 12px" }}
-          />
-          <div className="chat-doc-list" style={{ marginTop: 12 }}>
-            {data.documents
-              .filter((doc) => !docSearchQuery || doc.title.toLowerCase().includes(docSearchQuery.toLowerCase()))
-              .map((document) => (
-                <button
-                  key={document.id}
-                  className={`chat-doc-button ${selectedDocumentIds.includes(document.id) ? "active" : ""}`}
-                  type="button"
-                  onClick={() => toggleDocumentSelection(document.id)}
-                >
-                  <strong>{document.title}</strong>
-                  <div className="tiny">
-                    {document.source_type} · {document.status}
-                  </div>
-                </button>
-              ))}
-            {docSearchQuery && !data.documents.filter((doc) => doc.title.toLowerCase().includes(docSearchQuery.toLowerCase())).length && (
-              <div className="tiny">没有匹配的文档。</div>
-            )}
-          </div>
+        <section className="chat-sidebar-card chat-filter-card">
+          <button className="chat-filter-button" type="button" onClick={() => setIsDocumentFilterOpen(true)}>
+            <span>
+              <strong>文档过滤</strong>
+              <span className="tiny">{selectedDocumentIds.length ? `已限定 ${selectedDocumentIds.length} 份文档` : "当前使用整个命名空间"}</span>
+            </span>
+            <span className="chat-filter-arrow">›</span>
+          </button>
         </section>
       </aside>
 
@@ -501,11 +674,7 @@ export function ChatPage() {
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-semibold">引用来源 ({turn.citations.length})</h4>
                       </div>
-                      <div className="space-y-2">
-                        {turn.citations.map((citation, index) => (
-                          <CitationCard key={citation.citation_id} citation={citation} index={index + 1} />
-                        ))}
-                      </div>
+                      <CitationSourceList citations={turn.citations} onOpenDocument={setActiveCitationSource} />
                       {turn.confidence != null && <ConfidenceBar confidence={turn.confidence} />}
                     </div>
                   </div>
@@ -582,6 +751,18 @@ export function ChatPage() {
           </div>
         </section>
       </section>
+      <DocumentFilterDialog
+        documents={data.documents}
+        isOpen={isDocumentFilterOpen}
+        isStreaming={isStreaming}
+        query={docSearchQuery}
+        selectedDocumentIds={selectedDocumentIds}
+        onClose={() => setIsDocumentFilterOpen(false)}
+        onQueryChange={setDocSearchQuery}
+        onClear={() => setSelectedDocumentIds([])}
+        onToggleDocument={toggleDocumentSelection}
+      />
+      <DocumentDrawer source={activeCitationSource} onClose={() => setActiveCitationSource(null)} />
       <ToastContainer />
     </main>
   );
