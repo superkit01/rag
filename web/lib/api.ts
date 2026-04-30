@@ -1,4 +1,6 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000/api";
+import { SourceDocument } from "./types";
+
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost-8000/api";
 
 export async function fetchJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -118,6 +120,7 @@ export type AnswerTrace = {
   answer: string;
   confidence: number;
   citations: StreamAnswerMeta["citations"];
+  source_documents: SourceDocument[];
 };
 
 export async function fetchAnswerTraces(knowledgeSpaceId?: string): Promise<AnswerTrace[]> {
