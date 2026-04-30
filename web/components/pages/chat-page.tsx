@@ -127,12 +127,34 @@ export function ChatPage() {
     return `${diffDays}天前`;
   }
 
+  function generateSessionName(question: string): string {
+    const truncated = question.length > 20 ? question.slice(0, 20) + "..." : question;
+    return truncated;
+  }
+
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const currentQuestion = question.trim();
     if (!currentQuestion) {
       setStatus("请输入问题后再开始问答。");
       return;
+    }
+
+    // Create session if none active
+    let activeSessionId = currentSessionId;
+    if (!activeSessionId) {
+      try {
+        const newSession = await createSession({
+          knowledge_space_id: data.selectedSpaceId || data.spaces[0]?.id || "",
+          name: generateSessionName(currentQuestion)
+        });
+        activeSessionId = newSession.id;
+        setCurrentSessionId(newSession.id);
+        setSessions((current) => [newSession, ...current]);
+      } catch (error) {
+        showToast(`创建会话失败: ${getErrorMessage(error)}`, "error");
+        return;
+      }
     }
 
     const turnId = `${Date.now()}`;
@@ -149,6 +171,7 @@ export function ChatPage() {
         ...current,
         {
           id: turnId,
+          session_id: activeSessionId,
           question: currentQuestion,
           answer: "",
           citations: [],
@@ -204,6 +227,15 @@ export function ChatPage() {
             });
           },
           onDone(result) {
+            // Update session timestamp
+            if (activeSessionId) {
+              updateSession(activeSessionId, {}).catch(() => {
+                // Silent fail - timestamp update not critical
+              });
+              // Refresh sessions list
+              fetchSessions(data.selectedSpaceId || undefined).then(setSessions).catch(() => {});
+            }
+
             setStreamingProgress(100);
             setStreamingPhase("done");
             setAnswer(result);
