@@ -13,7 +13,6 @@ import type { AnswerResponse, Citation, FeedbackResponse, SourceDocument } from 
 import { CitationCard } from "@/components/ui/citation-card";
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer";
 import { ToastContainer } from "@/components/ui/toast";
-import type { AnswerTrace } from "@/lib/api";
 
 type ChatTurn = {
   id: string;
@@ -75,7 +74,6 @@ export function ChatPage() {
   const [turns, setTurns] = useState<ChatTurn[]>([]);
   const [showAllHistory, setShowAllHistory] = useState(false);
   const [docSearchQuery, setDocSearchQuery] = useState("");
-  const [historyTraces, setHistoryTraces] = useState<AnswerTrace[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<Session[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
