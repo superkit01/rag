@@ -37,3 +37,4 @@ web/node_modules/
 /**/data/
 /**/logs/
 .superpowers/
+.worktrees/
