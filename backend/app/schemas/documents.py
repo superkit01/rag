@@ -47,6 +47,8 @@ class ChunkRead(BaseModel):
 
     id: str
     fragment_id: str
+    chunk_type: str = "fixed"
+    parent_id: str | None = None
     section_title: str
     heading_path: list[str]
     page_number: int | None
@@ -103,6 +105,8 @@ class ReindexResponse(BaseModel):
 class FragmentRead(BaseModel):
     document_id: str
     fragment_id: str
+    chunk_type: str = "fixed"
+    parent_id: str | None = None
     section_title: str
     heading_path: list[str]
     page_number: int | None

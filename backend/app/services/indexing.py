@@ -25,6 +25,8 @@ class IndexedChunk:
     page_number: int | None
     content: str
     embedding: list[float]
+    chunk_type: str = "fixed"
+    parent_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -41,6 +43,8 @@ class SearchResult:
     score: float
     lexical_score: float
     semantic_score: float
+    chunk_type: str = "fixed"
+    parent_id: str | None = None
 
 
 class EmbeddingProvider(Protocol):
@@ -88,6 +92,8 @@ class InMemorySearchBackend:
     def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
         with self._lock:
             for chunk in chunks:
+                if chunk.chunk_type == "parent":
+                    continue
                 self._chunks[chunk.chunk_id] = chunk
 
     def remove_document(self, document_id: str) -> None:
@@ -129,13 +135,15 @@ class InMemorySearchBackend:
                     score=combined,
                     lexical_score=lexical_score,
                     semantic_score=semantic_score,
+                    chunk_type=chunk.chunk_type,
+                    parent_id=chunk.parent_id,
                 )
             )
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:top_k]
 
     def bootstrap_from_database(self, db: Session) -> None:
-        chunks = db.query(Chunk).all()
+        chunks = db.query(Chunk).filter(Chunk.chunk_type.in_(("fixed", "child"))).all()
         indexed = [
             IndexedChunk(
                 chunk_id=chunk.id,
@@ -148,10 +156,13 @@ class InMemorySearchBackend:
                 page_number=chunk.page_number,
                 content=chunk.content,
                 embedding=chunk.embedding,
+                chunk_type=chunk.chunk_type,
+                parent_id=chunk.parent_id,
             )
             for chunk in chunks
         ]
-        self.upsert_chunks(indexed)
+        with self._lock:
+            self._chunks = {chunk.chunk_id: chunk for chunk in indexed}
 
 
 class OpenSearchSearchBackend(InMemorySearchBackend):
@@ -171,6 +182,7 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         self._index_ready = False
 
     def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
         if not chunks:
             return
         self._ensure_index()
@@ -186,6 +198,8 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
                         "document_title": chunk.document_title,
                         "document_title_terms": self._terms(chunk.document_title),
                         "fragment_id": chunk.fragment_id,
+                        "chunk_type": chunk.chunk_type,
+                        "parent_id": chunk.parent_id,
                         "section_title": chunk.section_title,
                         "section_title_terms": self._terms(chunk.section_title),
                         "heading_path": chunk.heading_path,
@@ -299,6 +313,8 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
                     score=combined,
                     lexical_score=lexical_score,
                     semantic_score=round(semantic_score, 4),
+                    chunk_type=source.get("chunk_type", "fixed"),
+                    parent_id=source.get("parent_id"),
                 )
             )
 
@@ -321,6 +337,8 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
                             "document_title": {"type": "text"},
                             "document_title_terms": {"type": "text"},
                             "fragment_id": {"type": "keyword"},
+                            "chunk_type": {"type": "keyword"},
+                            "parent_id": {"type": "keyword"},
                             "section_title": {"type": "text"},
                             "section_title_terms": {"type": "text"},
                             "heading_path": {"type": "keyword"},

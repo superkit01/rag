@@ -26,6 +26,10 @@ def ensure_runtime_schema(engine) -> None:
             "attempt_count": "INTEGER NOT NULL DEFAULT 1",
             "error_message": "TEXT",
         },
+        "chunks": {
+            "chunk_type": "VARCHAR(16) NOT NULL DEFAULT 'fixed'",
+            "parent_id": "VARCHAR(64)",
+        },
     }
 
     with engine.begin() as connection:
@@ -35,3 +39,7 @@ def ensure_runtime_schema(engine) -> None:
                 if column_name in existing:
                     continue
                 connection.execute(text(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {ddl}"))
+        if "chunks" in inspector.get_table_names():
+            index_names = {index["name"] for index in inspector.get_indexes("chunks")}
+            if "ix_chunks_parent_id" not in index_names:
+                connection.execute(text("CREATE INDEX ix_chunks_parent_id ON chunks (parent_id)"))

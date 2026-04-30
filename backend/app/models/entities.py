@@ -78,6 +78,8 @@ class Chunk(TimestampMixin, Base):
     document_id: Mapped[str] = mapped_column(ForeignKey("documents.id"), nullable=False)
     knowledge_space_id: Mapped[str] = mapped_column(ForeignKey("knowledge_spaces.id"), nullable=False)
     fragment_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    chunk_type: Mapped[str] = mapped_column(String(16), default="fixed", nullable=False)
+    parent_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     section_title: Mapped[str] = mapped_column(String(255), default="Introduction", nullable=False)
     heading_path: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     page_number: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)

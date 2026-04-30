@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import Settings
 from app.services.answering import AnswerService
-from app.services.chunking import HierarchicalChunker
+from app.services.chunking_factory import ChunkingStrategyFactory
 from app.services.evaluation import EvaluationService
 from app.services.indexing import InMemorySearchBackend, OpenSearchSearchBackend
 from app.services.ingestion import IngestionService
@@ -32,7 +32,7 @@ class ServiceContainer:
         self.settings = settings
         self.embedding_provider = build_embedding_provider(settings)
         self.search_backend = build_search_backend(settings, self.embedding_provider)
-        self.chunker = HierarchicalChunker(settings.chunk_size, settings.chunk_overlap)
+        self.chunker = ChunkingStrategyFactory.create(settings)
         self.parser = CompositeDocumentParser(settings.object_storage_local_root)
         self.object_storage = build_object_storage(settings)
         self.answer_provider = build_answer_provider(settings)

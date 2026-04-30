@@ -62,6 +62,8 @@ def get_fragment(
     return FragmentRead(
         document_id=document_id,
         fragment_id=chunk.fragment_id,
+        chunk_type=chunk.chunk_type,
+        parent_id=chunk.parent_id,
         section_title=chunk.section_title,
         heading_path=chunk.heading_path,
         page_number=chunk.page_number,

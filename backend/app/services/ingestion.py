@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.entities import AnswerTrace, Chunk, Document, EvalCase, EvalRun, IngestionJob, KnowledgeSpace
 from app.schemas.common import KnowledgeSpaceCreate
 from app.schemas.documents import SourceImportRequest
-from app.services.chunking import HierarchicalChunker
+from app.services.chunking_strategies import ChunkingStrategy, PreparedChunk
 from app.services.indexing import EmbeddingProvider, IndexedChunk, SearchBackend
 from app.services.object_storage import ObjectStorage
 from app.services.parser import CompositeDocumentParser
@@ -19,7 +19,7 @@ class IngestionService:
     def __init__(
         self,
         parser: CompositeDocumentParser,
-        chunker: HierarchicalChunker,
+        chunker: ChunkingStrategy,
         search_backend: SearchBackend,
         embedding_provider: EmbeddingProvider,
         object_storage: ObjectStorage,
@@ -279,23 +279,7 @@ class IngestionService:
             db.refresh(job)
             db.refresh(document)
 
-            self.search_backend.upsert_chunks(
-                [
-                    IndexedChunk(
-                        chunk_id=chunk.id,
-                        knowledge_space_id=chunk.knowledge_space_id,
-                        document_id=chunk.document_id,
-                        document_title=document.title,
-                        fragment_id=chunk.fragment_id,
-                        section_title=chunk.section_title,
-                        heading_path=chunk.heading_path,
-                        page_number=chunk.page_number,
-                        content=chunk.content,
-                        embedding=chunk.embedding,
-                    )
-                    for chunk in indexed_chunks
-                ]
-            )
+            self.search_backend.upsert_chunks(self._to_indexed_chunks(document, indexed_chunks))
             db.refresh(job)
             if job.status == "cancelling":
                 self.search_backend.remove_document(document.id)
@@ -353,23 +337,7 @@ class IngestionService:
             db.refresh(job)
             db.refresh(document)
 
-            self.search_backend.upsert_chunks(
-                [
-                    IndexedChunk(
-                        chunk_id=chunk.id,
-                        knowledge_space_id=chunk.knowledge_space_id,
-                        document_id=chunk.document_id,
-                        document_title=document.title,
-                        fragment_id=chunk.fragment_id,
-                        section_title=chunk.section_title,
-                        heading_path=chunk.heading_path,
-                        page_number=chunk.page_number,
-                        content=chunk.content,
-                        embedding=chunk.embedding,
-                    )
-                    for chunk in new_chunks
-                ]
-            )
+            self.search_backend.upsert_chunks(self._to_indexed_chunks(document, new_chunks))
             db.refresh(job)
             if job.status == "cancelling":
                 self.search_backend.remove_document(document.id)
@@ -421,18 +389,24 @@ class IngestionService:
             knowledge_space_id=knowledge_space_id,
         )
 
-    def _materialize_chunks(self, document: Document, chunks: Iterable) -> list[Chunk]:
+    def _materialize_chunks(self, document: Document, chunks: Iterable[PreparedChunk]) -> list[Chunk]:
         prepared_chunks = list(chunks)
-        embeddings = self.embedding_provider.embed_many([prepared.content for prepared in prepared_chunks])
-        if len(embeddings) != len(prepared_chunks):
+        searchable_chunks = [prepared for prepared in prepared_chunks if self._is_searchable_chunk(prepared.chunk_type)]
+        embeddings = self.embedding_provider.embed_many([prepared.content for prepared in searchable_chunks])
+        if len(embeddings) != len(searchable_chunks):
             raise ValueError("Embedding provider returned a different number of vectors than chunks.")
+        embedding_by_fragment_id = {
+            prepared.fragment_id: embedding for prepared, embedding in zip(searchable_chunks, embeddings)
+        }
         entities: list[Chunk] = []
-        for prepared, embedding in zip(prepared_chunks, embeddings):
+        for prepared in prepared_chunks:
             entities.append(
                 Chunk(
                     document_id=document.id,
                     knowledge_space_id=document.knowledge_space_id,
                     fragment_id=prepared.fragment_id,
+                    chunk_type=prepared.chunk_type,
+                    parent_id=prepared.parent_id,
                     section_title=prepared.section_title,
                     heading_path=prepared.heading_path,
                     page_number=prepared.page_number,
@@ -440,7 +414,30 @@ class IngestionService:
                     end_offset=prepared.end_offset,
                     token_count=prepared.token_count,
                     content=prepared.content,
-                    embedding=embedding,
+                    embedding=embedding_by_fragment_id.get(prepared.fragment_id, []),
                 )
             )
         return entities
+
+    def _to_indexed_chunks(self, document: Document, chunks: Iterable[Chunk]) -> list[IndexedChunk]:
+        return [
+            IndexedChunk(
+                chunk_id=chunk.id,
+                knowledge_space_id=chunk.knowledge_space_id,
+                document_id=chunk.document_id,
+                document_title=document.title,
+                fragment_id=chunk.fragment_id,
+                section_title=chunk.section_title,
+                heading_path=chunk.heading_path,
+                page_number=chunk.page_number,
+                content=chunk.content,
+                embedding=chunk.embedding,
+                chunk_type=chunk.chunk_type,
+                parent_id=chunk.parent_id,
+            )
+            for chunk in chunks
+            if self._is_searchable_chunk(chunk.chunk_type)
+        ]
+
+    def _is_searchable_chunk(self, chunk_type: str) -> bool:
+        return chunk_type in {"fixed", "child"}

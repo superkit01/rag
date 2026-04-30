@@ -8,7 +8,7 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
-from app.models.entities import AnswerTrace, Session as ChatSession
+from app.models.entities import AnswerTrace, Chunk, Session as ChatSession
 from app.schemas.queries import AnswerRequest, AnswerResponse, CitationRead, SourceDocumentRead
 from app.services.indexing import SearchBackend, SearchResult
 from app.services.ingestion import IngestionService
@@ -214,6 +214,7 @@ class AnswerService:
             document_ids=request.document_ids,
             top_k=self.settings.retrieval_top_k,
         )
+        results = self._replace_child_results_with_parents(db, results)
         reranked = self._rerank(request.question, results)[: self.settings.rerank_top_k]
         citations = self._build_citations(reranked[: request.max_citations])
         source_documents = self._build_source_documents(reranked)
@@ -317,6 +318,58 @@ class AnswerService:
             f"{question} 在现有文档中对应哪个章节？",
         ]
 
+    def _replace_child_results_with_parents(self, db: Session, results: list[SearchResult]) -> list[SearchResult]:
+        parent_ids = {result.parent_id for result in results if result.chunk_type == "child" and result.parent_id}
+        parent_chunks = self._load_parent_chunks_batch(db, parent_ids)
+        enriched: "OrderedDict[tuple[str, str], SearchResult]" = OrderedDict()
+
+        for result in results:
+            if result.chunk_type != "child" or not result.parent_id:
+                key = (result.document_id, result.fragment_id)
+                if key not in enriched:
+                    enriched[key] = result
+                continue
+
+            parent = parent_chunks.get((result.document_id, result.parent_id))
+            if parent is None:
+                key = (result.document_id, result.fragment_id)
+                if key not in enriched:
+                    enriched[key] = result
+                continue
+
+            key = (result.document_id, parent.fragment_id)
+            if key in enriched:
+                continue
+            enriched[key] = SearchResult(
+                chunk_id=parent.id,
+                knowledge_space_id=result.knowledge_space_id,
+                document_id=result.document_id,
+                document_title=result.document_title,
+                fragment_id=parent.fragment_id,
+                section_title=parent.section_title,
+                heading_path=parent.heading_path,
+                page_number=parent.page_number,
+                content=parent.content,
+                score=result.score,
+                lexical_score=result.lexical_score,
+                semantic_score=result.semantic_score,
+                chunk_type=parent.chunk_type,
+                parent_id=None,
+            )
+
+        return list(enriched.values())
+
+    def _load_parent_chunks_batch(self, db: Session, parent_ids: set[str | None]) -> dict[tuple[str, str], Chunk]:
+        clean_parent_ids = {parent_id for parent_id in parent_ids if parent_id}
+        if not clean_parent_ids:
+            return {}
+        chunks = (
+            db.query(Chunk)
+            .filter(Chunk.chunk_type == "parent", Chunk.fragment_id.in_(clean_parent_ids))
+            .all()
+        )
+        return {(chunk.document_id, chunk.fragment_id): chunk for chunk in chunks}
+
     def _stream_text(self, text: str) -> Iterator[str]:
         chunk_size = 48
         for start in range(0, len(text), chunk_size):
@@ -333,4 +386,6 @@ class AnswerService:
             "page_number": result.page_number,
             "content": result.content,
             "score": result.score,
+            "chunk_type": result.chunk_type,
+            "parent_id": result.parent_id,
         }
