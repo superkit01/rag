@@ -729,6 +729,11 @@ select {
   font-size: 14px;
 }
 
+.chat-sidebar-card .mini-button:hover {
+  background: #3b82f6;
+  color: white;
+}
+
 .chat-history {
   display: grid;
   gap: 10px;
@@ -747,6 +752,12 @@ select {
   display: block;
   margin-bottom: 6px;
   font-size: 14px;
+}
+
+.chat-history-item.active {
+  background: rgba(59, 130, 246, 0.1);
+  border-left: 3px solid #3b82f6;
+  padding-left: 11px; /* Compensate for border */
 }
 
 .chat-doc-list {
