@@ -115,6 +115,20 @@ export function ChatPage() {
     }
   }
 
+  function getRelativeTime(dateString: string): string {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diffMs = now.getTime() - date.getTime();
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+
+    if (diffMins < 1) return "刚刚";
+    if (diffMins < 60) return `${diffMins}分钟前`;
+    if (diffHours < 24) return `${diffHours}小时前`;
+    return `${diffDays}天前`;
+  }
+
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const currentQuestion = question.trim();
@@ -317,30 +331,44 @@ export function ChatPage() {
             </button>
           </div>
           <div className="chat-history" style={{ marginTop: 12 }}>
-            {historyTraces.length ? (
-              historyTraces
+            {sessions.length ? (
+              sessions
                 .slice()
-                .reverse()
                 .slice(0, showAllHistory ? undefined : 3)
-                .map((trace) => (
+                .map((session) => (
                   <div
-                    key={trace.id}
-                    className="chat-history-item"
-                    onClick={() => {
-                      setQuestion(trace.question);
-                      // 可以选择是否自动提交历史问题
-                      // textareaRef.current?.focus();
+                    key={session.id}
+                    className={`chat-history-item ${currentSessionId === session.id ? "active" : ""}`}
+                    onClick={async () => {
+                      try {
+                        const traces = await fetchSessionTraces(session.id);
+                        setCurrentSessionId(session.id);
+                        setTurns(traces.map((trace) => ({
+                          id: trace.id,
+                          session_id: session.id,
+                          question: trace.question,
+                          answer: trace.answer,
+                          citations: trace.citations,
+                          sourceDocuments: [],
+                          confidence: trace.confidence,
+                          answerTraceId: trace.id,
+                          isStreaming: false
+                        })));
+                        showToast(`已加载会话: ${session.name}`, "success");
+                      } catch (error) {
+                        showToast(`加载会话失败: ${getErrorMessage(error)}`, "error");
+                      }
                     }}
                     style={{ cursor: "pointer" }}
                   >
-                    <strong>{trace.question}</strong>
+                    <strong>{session.name}</strong>
                     <div className="tiny">
-                      置信度 {Math.round(trace.confidence * 100)}% · 引用 {trace.citations.length} 条
+                      点击加载 · {getRelativeTime(session.updated_at)}
                     </div>
                   </div>
                 ))
             ) : (
-              <div className="tiny">暂无历史对话</div>
+              <div className="tiny">暂无历史会话</div>
             )}
           </div>
         </section>
