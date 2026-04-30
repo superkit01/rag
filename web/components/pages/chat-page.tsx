@@ -347,7 +347,7 @@ export function ChatPage() {
                           question: trace.question,
                           answer: trace.answer,
                           citations: trace.citations,
-                          sourceDocuments: [],
+                          sourceDocuments: trace.source_documents || [],
                           confidence: trace.confidence,
                           answerTraceId: trace.id,
                           isStreaming: false
