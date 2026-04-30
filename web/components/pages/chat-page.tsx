@@ -183,6 +183,7 @@ export function ChatPage() {
       await streamAnswer<AnswerResponse>(
         {
           question: currentQuestion,
+          session_id: activeSessionId,
           knowledge_space_id: data.selectedSpaceId || undefined,
           knowledge_space_name: data.selectedSpaceId ? undefined : data.spaceName,
           document_ids: selectedDocumentIds,
