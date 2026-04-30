@@ -9,6 +9,7 @@ class AnswerRequest(BaseModel):
     question: str = Field(min_length=2)
     knowledge_space_id: str | None = None
     knowledge_space_name: str | None = None
+    session_id: str | None = None
     document_ids: list[str] = Field(default_factory=list)
     max_citations: int = Field(default=4, ge=1, le=10)
 

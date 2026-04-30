@@ -160,6 +160,7 @@ class AnswerService:
     def _persist_response(self, db: Session, context: dict, request: AnswerRequest, answer: str) -> AnswerResponse:
         trace = AnswerTrace(
             knowledge_space_id=context["knowledge_space_id"],
+            session_id=request.session_id,
             question=request.question,
             answer=answer,
             confidence=context["confidence"],
