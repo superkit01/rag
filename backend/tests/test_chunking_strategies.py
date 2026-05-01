@@ -3,7 +3,7 @@ from __future__ import annotations
 from app.core.config import Settings
 from app.services.chunking import HierarchicalChunker, PreparedChunk
 from app.services.chunking_factory import ChunkingStrategyFactory
-from app.services.chunking_strategies import ChunkingStrategy, FixedSizeStrategy, ParentChildStrategy
+from app.services.chunking_strategies import ChunkingStrategy, FixedSizeStrategy, ParentChildStrategy, SemanticStrategy
 from app.services.parser import ParsedSection
 
 
@@ -21,6 +21,26 @@ class MockChunkingStrategy(ChunkingStrategy):
                 content="Test content",
             )
         ]
+
+
+class FakeSemanticEmbeddingProvider:
+    def embed(self, text: str) -> list[float]:
+        return self.embed_many([text])[0]
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        embeddings: list[list[float]] = []
+        for text in texts:
+            finance = any(term in text for term in ("财务", "预算", "发票", "报销"))
+            release = any(term in text for term in ("发布", "回滚", "测试", "上线"))
+            if finance and not release:
+                embeddings.append([1.0, 0.0, 0.0])
+            elif release and not finance:
+                embeddings.append([0.0, 1.0, 0.0])
+            elif finance and release:
+                embeddings.append([0.0, 0.0, 1.0])
+            else:
+                embeddings.append([0.0, 0.0, 1.0])
+        return embeddings
 
 
 def test_chunking_strategy_interface() -> None:
@@ -97,6 +117,106 @@ def test_parent_child_strategy_creates_parent_and_child_relationships() -> None:
     assert all(child.page_number == 3 for child in children)
 
 
+def test_semantic_strategy_splits_at_low_similarity_window_boundary() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=500,
+        similarity_threshold=0.5,
+        window_size=35,
+        overlap_ratio=0.0,
+    )
+    content = (
+        "财务预算需要月度复核。发票归档需要双人检查。费用报销需要审批记录。"
+        "系统发布必须完成测试准入。核心系统上线需要发布窗口审批。回滚预案需要提前演练。"
+    )
+    sections = [ParsedSection(title="制度", heading_path=["制度"], page_number=2, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) >= 2
+    assert chunks[0].fragment_id == "semantic-0001"
+    assert chunks[1].fragment_id == "semantic-0002"
+    assert "财务" in chunks[0].content
+    assert "回滚" in chunks[-1].content
+    assert all(chunk.chunk_type == "fixed" for chunk in chunks)
+    assert all(chunk.parent_id is None for chunk in chunks)
+    assert all(chunk.page_number == 2 for chunk in chunks)
+
+
+def test_semantic_strategy_splits_high_similarity_text_by_max_size() -> None:
+    max_chunk_size = 45
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=max_chunk_size,
+        similarity_threshold=0.1,
+        window_size=80,
+        overlap_ratio=0.0,
+    )
+    content = "发布前完成测试。回滚预案演练。发布窗口审批。" * 6
+    sections = [ParsedSection(title="发布制度", heading_path=["制度", "发布"], page_number=2, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) > 1
+    assert all(len(chunk.content) <= max_chunk_size for chunk in chunks)
+    assert all(chunk.fragment_id.startswith("semantic-") for chunk in chunks)
+
+
+def test_semantic_strategy_keeps_short_text_as_single_chunk() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=500,
+        similarity_threshold=0.5,
+        window_size=300,
+        overlap_ratio=0.3,
+    )
+    content = "发布前需要测试准入。"
+    sections = [ParsedSection(title="发布制度", heading_path=["制度", "发布"], page_number=2, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) == 1
+    assert chunks[0].fragment_id == "semantic-0001"
+    assert chunks[0].content == content
+    assert chunks[0].chunk_type == "fixed"
+    assert chunks[0].parent_id is None
+
+
+def test_semantic_strategy_preserves_spaces_between_english_units() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=500,
+        similarity_threshold=0.5,
+        window_size=300,
+        overlap_ratio=0.3,
+    )
+    content = "Alpha release requires tests. Beta rollback requires approval."
+    sections = [ParsedSection(title="English", heading_path=["English"], page_number=None, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) == 1
+    assert chunks[0].content == content
+    assert chunks[0].content == content[chunks[0].start_offset : chunks[0].end_offset]
+
+
+def test_semantic_strategy_preserves_offsets_for_long_english_unit_fallback() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=45,
+        similarity_threshold=0.5,
+        window_size=300,
+        overlap_ratio=0.3,
+    )
+    content = "Release approval requires tests rollback planning deployment notes and owner signoff."
+    sections = [ParsedSection(title="English", heading_path=["English"], page_number=None, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) > 1
+    assert all(chunk.content == content[chunk.start_offset : chunk.end_offset] for chunk in chunks)
+
+
 def test_chunking_factory_creates_configured_strategy() -> None:
     fixed = ChunkingStrategyFactory.create(Settings(chunking_strategy="fixed-size", chunk_size=123, chunk_overlap=12))
     parent_child = ChunkingStrategyFactory.create(
@@ -111,6 +231,21 @@ def test_chunking_factory_creates_configured_strategy() -> None:
 
     assert isinstance(fixed, FixedSizeStrategy)
     assert isinstance(parent_child, ParentChildStrategy)
+
+
+def test_chunking_factory_creates_semantic_strategy_with_embedding_provider() -> None:
+    strategy = ChunkingStrategyFactory.create(
+        Settings(chunking_strategy="semantic"),
+        embedding_provider=FakeSemanticEmbeddingProvider(),
+    )
+
+    assert isinstance(strategy, SemanticStrategy)
+
+
+def test_chunking_factory_falls_back_for_semantic_without_embedding_provider() -> None:
+    strategy = ChunkingStrategyFactory.create(Settings(chunking_strategy="semantic"))
+
+    assert isinstance(strategy, FixedSizeStrategy)
 
 
 def test_chunking_factory_falls_back_to_fixed_size_for_unknown_strategy() -> None:
