@@ -30,10 +30,14 @@ class FakeSemanticEmbeddingProvider:
     def embed_many(self, texts: list[str]) -> list[list[float]]:
         embeddings: list[list[float]] = []
         for text in texts:
-            if "财务" in text or "预算" in text or "发票" in text:
+            finance = any(term in text for term in ("财务", "预算", "发票", "报销"))
+            release = any(term in text for term in ("发布", "回滚", "测试", "上线"))
+            if finance and not release:
                 embeddings.append([1.0, 0.0, 0.0])
-            elif "发布" in text or "回滚" in text or "测试" in text:
+            elif release and not finance:
                 embeddings.append([0.0, 1.0, 0.0])
+            elif finance and release:
+                embeddings.append([0.7, 0.7, 0.0])
             else:
                 embeddings.append([0.0, 0.0, 1.0])
         return embeddings
@@ -121,7 +125,10 @@ def test_semantic_strategy_splits_at_low_similarity_window_boundary() -> None:
         window_size=35,
         overlap_ratio=0.0,
     )
-    content = "财务预算需要按季度复核。发票归档必须完整。系统发布前要完成测试。回滚方案需要提前确认。"
+    content = (
+        "财务预算需要月度复核。发票归档需要双人检查。费用报销需要审批记录。"
+        "系统发布必须完成测试准入。核心系统上线需要发布窗口审批。回滚预案需要提前演练。"
+    )
     sections = [ParsedSection(title="制度", heading_path=["制度"], page_number=2, content=content)]
 
     chunks = strategy.chunk_sections(sections)
@@ -137,20 +144,21 @@ def test_semantic_strategy_splits_at_low_similarity_window_boundary() -> None:
 
 
 def test_semantic_strategy_splits_high_similarity_text_by_max_size() -> None:
+    max_chunk_size = 45
     strategy = SemanticStrategy(
         FakeSemanticEmbeddingProvider(),
-        max_chunk_size=45,
+        max_chunk_size=max_chunk_size,
         similarity_threshold=0.1,
         window_size=80,
         overlap_ratio=0.0,
     )
-    content = "发布制度要求发布前完成测试准入和回滚确认。" * 8
+    content = "发布前完成测试。回滚预案演练。发布窗口审批。" * 6
     sections = [ParsedSection(title="发布制度", heading_path=["制度", "发布"], page_number=2, content=content)]
 
     chunks = strategy.chunk_sections(sections)
 
     assert len(chunks) > 1
-    assert all(len(chunk.content) <= 70 for chunk in chunks)
+    assert all(len(chunk.content) <= max_chunk_size for chunk in chunks)
     assert all(chunk.fragment_id.startswith("semantic-") for chunk in chunks)
 
 
