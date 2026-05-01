@@ -32,7 +32,7 @@ class ServiceContainer:
         self.settings = settings
         self.embedding_provider = build_embedding_provider(settings)
         self.search_backend = build_search_backend(settings, self.embedding_provider)
-        self.chunker = ChunkingStrategyFactory.create(settings)
+        self.chunker = ChunkingStrategyFactory.create(settings, self.embedding_provider)
         self.parser = CompositeDocumentParser(settings.object_storage_local_root)
         self.object_storage = build_object_storage(settings)
         self.answer_provider = build_answer_provider(settings)

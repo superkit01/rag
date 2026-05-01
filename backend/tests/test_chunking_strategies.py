@@ -233,6 +233,21 @@ def test_chunking_factory_creates_configured_strategy() -> None:
     assert isinstance(parent_child, ParentChildStrategy)
 
 
+def test_chunking_factory_creates_semantic_strategy_with_embedding_provider() -> None:
+    strategy = ChunkingStrategyFactory.create(
+        Settings(chunking_strategy="semantic"),
+        embedding_provider=FakeSemanticEmbeddingProvider(),
+    )
+
+    assert isinstance(strategy, SemanticStrategy)
+
+
+def test_chunking_factory_falls_back_for_semantic_without_embedding_provider() -> None:
+    strategy = ChunkingStrategyFactory.create(Settings(chunking_strategy="semantic"))
+
+    assert isinstance(strategy, FixedSizeStrategy)
+
+
 def test_chunking_factory_falls_back_to_fixed_size_for_unknown_strategy() -> None:
     strategy = ChunkingStrategyFactory.create(Settings(chunking_strategy="unknown"))
 
