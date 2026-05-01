@@ -37,7 +37,7 @@ class FakeSemanticEmbeddingProvider:
             elif release and not finance:
                 embeddings.append([0.0, 1.0, 0.0])
             elif finance and release:
-                embeddings.append([0.7, 0.7, 0.0])
+                embeddings.append([0.0, 0.0, 1.0])
             else:
                 embeddings.append([0.0, 0.0, 1.0])
         return embeddings
@@ -180,6 +180,41 @@ def test_semantic_strategy_keeps_short_text_as_single_chunk() -> None:
     assert chunks[0].content == content
     assert chunks[0].chunk_type == "fixed"
     assert chunks[0].parent_id is None
+
+
+def test_semantic_strategy_preserves_spaces_between_english_units() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=500,
+        similarity_threshold=0.5,
+        window_size=300,
+        overlap_ratio=0.3,
+    )
+    content = "Alpha release requires tests. Beta rollback requires approval."
+    sections = [ParsedSection(title="English", heading_path=["English"], page_number=None, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) == 1
+    assert chunks[0].content == content
+    assert chunks[0].content == content[chunks[0].start_offset : chunks[0].end_offset]
+
+
+def test_semantic_strategy_preserves_offsets_for_long_english_unit_fallback() -> None:
+    strategy = SemanticStrategy(
+        FakeSemanticEmbeddingProvider(),
+        max_chunk_size=45,
+        similarity_threshold=0.5,
+        window_size=300,
+        overlap_ratio=0.3,
+    )
+    content = "Release approval requires tests rollback planning deployment notes and owner signoff."
+    sections = [ParsedSection(title="English", heading_path=["English"], page_number=None, content=content)]
+
+    chunks = strategy.chunk_sections(sections)
+
+    assert len(chunks) > 1
+    assert all(chunk.content == content[chunk.start_offset : chunk.end_offset] for chunk in chunks)
 
 
 def test_chunking_factory_creates_configured_strategy() -> None:
