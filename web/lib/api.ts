@@ -105,6 +105,7 @@ export async function streamAnswer<TDone = unknown>(
       }
       if (event === "delta") {
         handlers.onDelta(parsed as string);
+        await yieldToRenderer();
       }
       if (event === "done") {
         handlers.onDone(parsed as TDone);
@@ -114,6 +115,13 @@ export async function streamAnswer<TDone = unknown>(
       }
     }
   }
+}
+
+function yieldToRenderer(): Promise<void> {
+  if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+    return new Promise((resolve) => window.requestAnimationFrame(() => resolve()));
+  }
+  return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 export type AnswerTrace = {

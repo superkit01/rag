@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useRef, useState, useEffect } from "react";
+import { FormEvent, KeyboardEvent, useRef, useState, useEffect } from "react";
 import { motion } from "framer-motion";
 
 import { useConsoleData } from "@/hooks/use-console-data";
@@ -279,6 +279,7 @@ export function ChatPage() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const isComposingRef = useRef(false);
 
   // Load sessions on mount
   useEffect(() => {
@@ -336,6 +337,14 @@ export function ChatPage() {
     abortControllerRef.current = null;
     setIsStreaming(false);
     showToast("已中断回答", "info");
+  }
+
+  function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    const isComposing = isComposingRef.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229;
+    if (event.key === "Enter" && !event.shiftKey && !isComposing) {
+      event.preventDefault();
+      event.currentTarget.form?.requestSubmit();
+    }
   }
 
   async function handleAsk(event: FormEvent<HTMLFormElement>) {
@@ -430,13 +439,11 @@ export function ChatPage() {
 
               const preprocessed = preprocessCitations(nextText);
 
-              if (!hasIncompleteMarkdown(preprocessed)) {
-                setTurns((current) =>
-                  current.map((turn) =>
-                    turn.id === turnId ? { ...turn, answer: preprocessed } : turn
-                  )
-                );
-              }
+              setTurns((current) =>
+                current.map((turn) =>
+                  turn.id === turnId ? { ...turn, answer: preprocessed } : turn
+                )
+              );
               return nextText;
             });
           },
@@ -750,12 +757,13 @@ export function ChatPage() {
                   setQuestion(event.target.value);
                   adjustTextareaHeight();
                 }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && !event.shiftKey) {
-                    event.preventDefault();
-                    event.currentTarget.form?.requestSubmit();
-                  }
+                onCompositionStart={() => {
+                  isComposingRef.current = true;
                 }}
+                onCompositionEnd={() => {
+                  isComposingRef.current = false;
+                }}
+                onKeyDown={handleComposerKeyDown}
                 placeholder="给知识库发一条消息，或要求它基于引用整理结论..."
               />
               <div className="chat-composer-actions">
