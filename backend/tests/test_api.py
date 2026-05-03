@@ -63,6 +63,12 @@ def make_client(tmp_path: Path, orchestrator: object | None = None) -> TestClien
         object_storage_local_root=str(tmp_path / "object-storage"),
         object_storage_backend="local",
         workflow_backend="immediate",
+        search_backend="memory",
+        embedding_backend="hash",
+        chunking_strategy="fixed-size",
+        openai_api_key="",
+        openai_chat_model="",
+        openai_embedding_model="",
     )
     app = create_app(settings)
     if orchestrator is not None:

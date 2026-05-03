@@ -362,3 +362,19 @@ def build_embedding_provider(settings: Settings) -> HashEmbeddingProvider | Open
             batch_size=settings.openai_embedding_batch_size,
         )
     raise ValueError(f"Unsupported EMBEDDING_BACKEND: {settings.embedding_backend}")
+
+
+def build_semantic_embedding_provider(
+    settings: Settings,
+    fallback_provider: HashEmbeddingProvider | OpenAICompatibleEmbeddingProvider,
+) -> HashEmbeddingProvider | OpenAICompatibleEmbeddingProvider:
+    if settings.chunking_strategy != "semantic" or settings.embedding_backend != "openai":
+        return fallback_provider
+    if not settings.openai_api_key or not settings.semantic_embedding_model:
+        raise ValueError("CHUNKING_STRATEGY=semantic with EMBEDDING_BACKEND=openai requires SEMANTIC_EMBEDDING_MODEL.")
+    return OpenAICompatibleEmbeddingProvider(
+        base_url=settings.openai_base_url,
+        api_key=settings.openai_api_key,
+        model=settings.semantic_embedding_model,
+        batch_size=settings.openai_embedding_batch_size,
+    )

@@ -5,11 +5,13 @@ import pytest
 
 from app.core.config import Settings
 from app.services.indexing import cosine_similarity
+from app.services.container import ServiceContainer
 from app.services.llm import (
     HashEmbeddingProvider,
     OpenAICompatibleEmbeddingProvider,
     build_embedding_provider,
 )
+from app.services.chunking_strategies import SemanticStrategy
 
 
 def test_hash_embedding_provider_supports_batch_embedding() -> None:
@@ -88,7 +90,7 @@ def test_openai_compatible_embedding_provider_splits_large_batches() -> None:
 
 
 def test_build_embedding_provider_uses_hash_by_default() -> None:
-    provider = build_embedding_provider(Settings())
+    provider = build_embedding_provider(Settings(embedding_backend="hash"))
 
     assert isinstance(provider, HashEmbeddingProvider)
 
@@ -96,6 +98,24 @@ def test_build_embedding_provider_uses_hash_by_default() -> None:
 def test_build_embedding_provider_requires_openai_config() -> None:
     with pytest.raises(ValueError, match="OPENAI_API_KEY and OPENAI_EMBEDDING_MODEL"):
         build_embedding_provider(Settings(embedding_backend="openai", openai_api_key="", openai_embedding_model=""))
+
+
+def test_semantic_chunking_uses_semantic_embedding_model_for_boundary_detection() -> None:
+    container = ServiceContainer(
+        Settings(
+            embedding_backend="openai",
+            openai_api_key="test-key",
+            openai_embedding_model="retrieval-embedding-model",
+            chunking_strategy="semantic",
+            semantic_embedding_model="semantic-boundary-model",
+        )
+    )
+
+    assert isinstance(container.embedding_provider, OpenAICompatibleEmbeddingProvider)
+    assert container.embedding_provider.model == "retrieval-embedding-model"
+    assert isinstance(container.chunker, SemanticStrategy)
+    assert isinstance(container.chunker.embedding_provider, OpenAICompatibleEmbeddingProvider)
+    assert container.chunker.embedding_provider.model == "semantic-boundary-model"
 
 
 def test_cosine_similarity_returns_zero_for_dimension_mismatch() -> None:

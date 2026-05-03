@@ -197,7 +197,7 @@ docker compose up -d postgres redis opensearch minio temporal temporal-ui
 - 文档切割支持 `CHUNKING_STRATEGY=fixed-size`、`CHUNKING_STRATEGY=parent-child` 与 `CHUNKING_STRATEGY=semantic`：
   - `fixed-size` 保持原有固定窗口行为，使用 `CHUNK_SIZE` 和 `CHUNK_OVERLAP`。
   - `parent-child` 会同时生成 `parent` 和 `child` chunks；系统只对 `child` 生成 embedding 并写入搜索索引，回答时再批量加载对应 `parent` 内容作为生成上下文和引用来源。
-  - `semantic` 使用滑动窗口 embedding 相似度寻找语义边界，输出普通可检索 chunks；它会在导入和重建索引阶段额外调用 embedding provider，`EMBEDDING_BACKEND=openai` 时会增加模型调用成本。
+  - `semantic` 使用滑动窗口 embedding 相似度寻找语义边界，输出普通可检索 chunks；它会在导入和重建索引阶段额外调用 embedding provider，`EMBEDDING_BACKEND=openai` 时会增加模型调用成本。语义边界判断使用 `SEMANTIC_EMBEDDING_MODEL`，最终 chunk 入库和检索向量仍使用 `OPENAI_EMBEDDING_MODEL`。
   - 可通过 `PARENT_CHUNK_SIZE`、`PARENT_CHUNK_OVERLAP`、`CHILD_CHUNK_SIZE`、`CHILD_CHUNK_OVERLAP` 调整父子切块粒度；可通过 `SEMANTIC_CHUNK_MAX_SIZE`、`SEMANTIC_SIMILARITY_THRESHOLD`、`SLIDING_WINDOW_SIZE`、`SLIDING_OVERLAP_RATIO` 调整语义切块粒度。切换策略后，建议对历史文档执行重建索引。
 - `SEARCH_BACKEND` 当前显式支持 `memory` 和 `opensearch` 两档；本机直接运行后端时默认仍使用 `memory`，需要时可切到 `opensearch`。
 - 单元测试默认使用 `WORKFLOW_BACKEND=immediate` 保持轻量回归，而标准开发和 Docker 环境默认使用真实 Temporal 工作流调度。

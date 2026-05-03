@@ -11,7 +11,7 @@ from app.services.chunking_factory import ChunkingStrategyFactory
 from app.services.evaluation import EvaluationService
 from app.services.indexing import InMemorySearchBackend, OpenSearchSearchBackend
 from app.services.ingestion import IngestionService
-from app.services.llm import build_answer_provider, build_embedding_provider
+from app.services.llm import build_answer_provider, build_embedding_provider, build_semantic_embedding_provider
 from app.services.object_storage import build_object_storage
 from app.services.parser import CompositeDocumentParser
 
@@ -32,7 +32,8 @@ class ServiceContainer:
         self.settings = settings
         self.embedding_provider = build_embedding_provider(settings)
         self.search_backend = build_search_backend(settings, self.embedding_provider)
-        self.chunker = ChunkingStrategyFactory.create(settings, self.embedding_provider)
+        self.chunking_embedding_provider = build_semantic_embedding_provider(settings, self.embedding_provider)
+        self.chunker = ChunkingStrategyFactory.create(settings, self.chunking_embedding_provider)
         self.parser = CompositeDocumentParser(settings.object_storage_local_root)
         self.object_storage = build_object_storage(settings)
         self.answer_provider = build_answer_provider(settings)
