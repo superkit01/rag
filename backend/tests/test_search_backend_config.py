@@ -56,6 +56,27 @@ def test_build_search_backend_supports_hybrid() -> None:
     assert backend.backend_name == "opensearch-milvus-hybrid"
 
 
+def test_milvus_backend_uses_null_lexical_retriever_by_default() -> None:
+    backend = build_search_backend(
+        Settings(search_backend="milvus", embedding_dimensions=8),
+        HashEmbeddingProvider(dimensions=8),
+    )
+
+    assert backend.backend_name == "milvus-vector"
+    assert backend.lexical_retriever.__class__.__name__ == "NullLexicalRetriever"
+
+
+def test_hybrid_backend_uses_opensearch_lexical_and_milvus_vector() -> None:
+    backend = build_search_backend(
+        Settings(search_backend="hybrid", embedding_dimensions=8),
+        HashEmbeddingProvider(dimensions=8),
+    )
+
+    assert backend.backend_name == "opensearch-milvus-hybrid"
+    assert backend.lexical_retriever.__class__.__name__ == "OpenSearchLexicalRetriever"
+    assert backend.vector_retriever.__class__.__name__ == "MilvusVectorRetriever"
+
+
 def test_build_search_backend_rejects_invalid_value() -> None:
     with pytest.raises(ValueError, match="Unsupported SEARCH_BACKEND"):
         build_search_backend(Settings(search_backend="invalid"), HashEmbeddingProvider())
