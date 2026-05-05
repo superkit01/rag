@@ -8,6 +8,17 @@ from app.services.indexing import IndexedChunk, OpenSearchLexicalRetriever, Open
 from app.services.llm import HashEmbeddingProvider
 
 
+class StaticEmbeddingProvider:
+    def __init__(self, embeddings: dict[str, list[float]]) -> None:
+        self.embeddings = embeddings
+
+    def embed(self, text: str) -> list[float]:
+        return self.embeddings.get(text, [0.0, 0.0])
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed(text) for text in texts]
+
+
 def test_opensearch_backend_indexes_and_reranks() -> None:
     calls: list[tuple[str, str]] = []
     provider = HashEmbeddingProvider(dimensions=4)
@@ -216,3 +227,126 @@ def test_opensearch_backend_search_uses_single_top_k_expansion() -> None:
     backend.search("核心数据变更", "space-1", None, 5)
 
     assert search_sizes == [15, 20]
+
+
+def test_opensearch_backend_reranks_expanded_candidates_before_final_trim() -> None:
+    query = "核心数据变更"
+    provider = StaticEmbeddingProvider({query: [1.0, 0.0]})
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD" and request.url.path == "/rag_chunks":
+            return httpx.Response(200)
+        if request.method == "POST" and request.url.path == "/rag_chunks/_search":
+            return httpx.Response(
+                200,
+                json={
+                    "hits": {
+                        "hits": [
+                            {
+                                "_score": 10.0,
+                                "_source": {
+                                    "chunk_id": "lexical-winner",
+                                    "knowledge_space_id": "space-1",
+                                    "document_id": "doc-1",
+                                    "document_title": "发布管理规范.md",
+                                    "fragment_id": "frag-1",
+                                    "chunk_type": "fixed",
+                                    "parent_id": None,
+                                    "section_title": "发布检查",
+                                    "heading_path": ["发布检查"],
+                                    "page_number": None,
+                                    "content": "词法分数更高但语义无关",
+                                    "embedding": [0.0, 0.0],
+                                },
+                            },
+                            {
+                                "_score": 7.0,
+                                "_source": {
+                                    "chunk_id": "semantic-winner",
+                                    "knowledge_space_id": "space-1",
+                                    "document_id": "doc-2",
+                                    "document_title": "核心数据规范.md",
+                                    "fragment_id": "frag-2",
+                                    "chunk_type": "fixed",
+                                    "parent_id": None,
+                                    "section_title": "变更准入",
+                                    "heading_path": ["变更准入"],
+                                    "page_number": None,
+                                    "content": "语义分数更高",
+                                    "embedding": [1.0, 0.0],
+                                },
+                            },
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    backend = OpenSearchSearchBackend(
+        provider,
+        base_url="http://opensearch:9200",
+        index_name="rag_chunks",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://opensearch:9200"),
+    )
+
+    results = backend.search(query, "space-1", None, 1)
+
+    assert len(results) == 1
+    assert results[0].chunk_id == "semantic-winner"
+    assert results[0].semantic_score == 1.0
+
+
+def test_opensearch_backend_returns_zero_score_fallback_hit_with_semantic_match() -> None:
+    query = "核心数据变更"
+    provider = StaticEmbeddingProvider({query: [1.0, 0.0]})
+    search_calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal search_calls
+        if request.method == "HEAD" and request.url.path == "/rag_chunks":
+            return httpx.Response(200)
+        if request.method == "POST" and request.url.path == "/rag_chunks/_search":
+            search_calls += 1
+            if search_calls == 1:
+                return httpx.Response(200, json={"hits": {"hits": []}})
+            return httpx.Response(
+                200,
+                json={
+                    "hits": {
+                        "hits": [
+                            {
+                                "_score": 0.0,
+                                "_source": {
+                                    "chunk_id": "fallback-hit",
+                                    "knowledge_space_id": "space-1",
+                                    "document_id": "doc-1",
+                                    "document_title": "发布管理规范.md",
+                                    "fragment_id": "frag-1",
+                                    "chunk_type": "fixed",
+                                    "parent_id": None,
+                                    "section_title": "发布检查",
+                                    "heading_path": ["发布检查"],
+                                    "page_number": None,
+                                    "content": "过滤兜底命中的语义相关片段",
+                                    "embedding": [1.0, 0.0],
+                                },
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    backend = OpenSearchSearchBackend(
+        provider,
+        base_url="http://opensearch:9200",
+        index_name="rag_chunks",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://opensearch:9200"),
+    )
+
+    results = backend.search(query, "space-1", None, 5)
+
+    assert len(results) == 1
+    assert results[0].chunk_id == "fallback-hit"
+    assert results[0].lexical_score == 0.0
+    assert results[0].semantic_score > 0

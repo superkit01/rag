@@ -479,6 +479,8 @@ class OpenSearchLexicalRetriever:
         knowledge_space_id: str,
         document_ids: list[str] | None = None,
         top_k: int = 50,
+        *,
+        expand_query_size: bool = True,
     ) -> list[LexicalCandidate]:
         self._ensure_index()
         query_tokens = tokenize_text(query)
@@ -487,8 +489,9 @@ class OpenSearchLexicalRetriever:
         if document_ids:
             filters.append({"terms": {"document_id": document_ids}})
 
+        query_size = max(top_k * 3, top_k) if expand_query_size else top_k
         body = {
-            "size": max(top_k * 3, top_k),
+            "size": query_size,
             "_source": True,
             "query": {
                 "bool": {
@@ -532,8 +535,6 @@ class OpenSearchLexicalRetriever:
         for hit in hits:
             source = hit.get("_source", {})
             lexical_score = round((hit.get("_score") or 0.0) / max_raw_score, 4)
-            if lexical_score <= 0:
-                continue
             candidates.append(
                 LexicalCandidate(
                     chunk=IndexedChunk(
@@ -665,7 +666,14 @@ class OpenSearchSearchBackend(HybridSearchBackend):
         document_ids: list[str] | None = None,
         top_k: int = 50,
     ) -> list[SearchResult]:
-        lexical_candidates = self._opensearch_lexical_retriever.search(query, knowledge_space_id, document_ids, top_k)
+        expanded_top_k = self._candidate_top_k(top_k)
+        lexical_candidates = self._opensearch_lexical_retriever.search(
+            query,
+            knowledge_space_id,
+            document_ids,
+            expanded_top_k,
+            expand_query_size=False,
+        )
         query_embedding = self.embedding_provider.embed(query)
         vector_candidates = [
             VectorCandidate(
