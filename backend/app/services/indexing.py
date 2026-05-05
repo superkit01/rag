@@ -68,6 +68,24 @@ class SearchBackend(Protocol):
         ...
 
 
+class MilvusVectorRetriever:
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        self.args = args
+        self.kwargs = kwargs
+
+
+class HybridSearchBackend:
+    def __init__(
+        self,
+        backend_name: str,
+        vector_retriever: object,
+        lexical_retriever: object | None = None,
+    ) -> None:
+        self.backend_name = backend_name
+        self.vector_retriever = vector_retriever
+        self.lexical_retriever = lexical_retriever
+
+
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right:
         return 0.0
