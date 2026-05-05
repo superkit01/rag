@@ -308,12 +308,14 @@ class HybridSearchBackend:
         vector_retriever: VectorRetriever,
         embedding_provider: EmbeddingProvider,
         fusion: ResultFusion | None = None,
+        candidate_top_k_multiplier: int | None = 3,
     ) -> None:
         self.backend_name = backend_name
         self.lexical_retriever = lexical_retriever
         self.vector_retriever = vector_retriever
         self.embedding_provider = embedding_provider
         self.fusion = fusion or ResultFusion()
+        self.candidate_top_k_multiplier = candidate_top_k_multiplier
 
     def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
         chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
@@ -332,10 +334,19 @@ class HybridSearchBackend:
         top_k: int = 50,
     ) -> list[SearchResult]:
         query_embedding = self.embedding_provider.embed(query)
-        expanded_top_k = max(top_k * 3, top_k)
+        expanded_top_k = self._candidate_top_k(top_k)
         lexical_candidates = self.lexical_retriever.retrieve(query, knowledge_space_id, document_ids, expanded_top_k)
         vector_candidates = self.vector_retriever.retrieve(query_embedding, knowledge_space_id, document_ids, expanded_top_k)
         return self.fusion.merge(query, lexical_candidates, vector_candidates, top_k)
+
+    def _candidate_top_k(self, top_k: int) -> int:
+        if self.candidate_top_k_multiplier is not None:
+            return max(top_k * self.candidate_top_k_multiplier, top_k)
+        store = getattr(self.lexical_retriever, "store", None) or getattr(self.vector_retriever, "store", None)
+        chunks = getattr(store, "chunks", None)
+        if chunks is not None:
+            return max(len(chunks), top_k)
+        return max(top_k * 1000, top_k)
 
 
 class InMemorySearchBackend:
@@ -349,7 +360,12 @@ class InMemorySearchBackend:
             MemoryLexicalRetriever(self._store),
             MemoryVectorRetriever(embedding_provider, self._store),
             embedding_provider,
+            candidate_top_k_multiplier=None,
         )
+
+    @property
+    def _chunks(self) -> dict[str, IndexedChunk]:
+        return self._store.chunks
 
     def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
         self._backend.upsert_chunks(chunks)

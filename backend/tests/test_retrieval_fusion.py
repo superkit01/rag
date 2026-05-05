@@ -1,6 +1,7 @@
 from app.services.indexing import (
     HybridSearchBackend,
     IndexedChunk,
+    InMemorySearchBackend,
     LexicalCandidate,
     MemoryLexicalRetriever,
     MemoryVectorRetriever,
@@ -8,6 +9,17 @@ from app.services.indexing import (
     VectorCandidate,
 )
 from app.services.llm import HashEmbeddingProvider
+
+
+class StaticEmbeddingProvider:
+    def __init__(self, embeddings: dict[str, list[float]]) -> None:
+        self.embeddings = embeddings
+
+    def embed(self, text: str) -> list[float]:
+        return self.embeddings.get(text, [0.0, 0.0])
+
+    def embed_many(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed(text) for text in texts]
 
 
 def make_chunk(chunk_id: str, content: str = "核心数据变更必须有回滚预案") -> IndexedChunk:
@@ -73,3 +85,46 @@ def test_hybrid_backend_combines_memory_lexical_and_vector_retrieval() -> None:
     assert results[0].chunk_id == "chunk-3"
     assert results[0].lexical_score > 0
     assert results[0].semantic_score > 0
+
+
+def test_memory_backend_exhaustively_fuses_candidates_before_ranking() -> None:
+    query = "alpha beta gamma delta"
+    balanced_content = "alpha beta gamma balanced"
+    provider = StaticEmbeddingProvider(
+        {
+            query: [1.0, 0.0],
+            balanced_content: [0.75, 0.661438],
+            "alpha beta gamma delta lexical one": [0.0, 0.0],
+            "alpha beta gamma delta lexical two": [0.0, 0.0],
+            "alpha beta gamma delta lexical three": [0.0, 0.0],
+            "vector one": [1.0, 0.0],
+            "vector two": [1.0, 0.0],
+            "vector three": [1.0, 0.0],
+        }
+    )
+    backend = InMemorySearchBackend(provider)
+    backend.upsert_chunks(
+        [
+            make_chunk("lexical-1", "alpha beta gamma delta lexical one"),
+            make_chunk("lexical-2", "alpha beta gamma delta lexical two"),
+            make_chunk("lexical-3", "alpha beta gamma delta lexical three"),
+            make_chunk("vector-1", "vector one"),
+            make_chunk("vector-2", "vector two"),
+            make_chunk("vector-3", "vector three"),
+            make_chunk("balanced", balanced_content),
+        ]
+    )
+
+    results = backend.search(query, "space-1", None, 1)
+
+    assert results[0].chunk_id == "balanced"
+    assert results[0].lexical_score == 0.75
+    assert results[0].semantic_score == 0.75
+
+
+def test_memory_backend_preserves_chunks_compatibility_property() -> None:
+    backend = InMemorySearchBackend(HashEmbeddingProvider(dimensions=4))
+    backend.upsert_chunks([make_chunk("chunk-4")])
+
+    assert backend._chunks
+    assert backend._chunks["chunk-4"].chunk_id == "chunk-4"
