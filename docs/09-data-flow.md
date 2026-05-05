@@ -25,7 +25,7 @@ flowchart TD
     B --> C["文档解析 Parser"]
     C --> D["Section / Chunk 切分"]
     D --> E["PostgreSQL: documents / chunks"]
-    E --> F["Search Backend: Memory 或 OpenSearch"]
+    E --> F["Search Backend: Memory / OpenSearch / Milvus"]
     F --> G["Query Answer 检索"]
     G --> H["AnswerTrace 持久化"]
     H --> I["Feedback / Eval 消费"]
@@ -48,7 +48,7 @@ flowchart TD
     I --> J["构造 Document + Chunk"]
     J --> K["PostgreSQL<br/>documents / chunks"]
     K --> L["search_backend.upsert_chunks"]
-    L --> M["Memory / OpenSearch 索引"]
+    L --> M["Memory / OpenSearch / Milvus 索引"]
     M --> N["ingestion_job = completed"]
 
     O["用户提问 query"] --> P["AnswerService.answer / stream_answer"]
@@ -267,10 +267,12 @@ PG 不是唯一存储层。写完 PG 后，系统还会把 chunk 写入检索后
 
 - `search_backend.upsert_chunks(...)`
 
-检索后端有两种：
+检索后端有四种：
 
 - `memory-hybrid`
 - `opensearch-hybrid`
+- `milvus-vector`
+- `opensearch-milvus-hybrid`
 
 对应实现：
 
@@ -280,6 +282,7 @@ PG 不是唯一存储层。写完 PG 后，系统还会把 chunk 写入检索后
 
 - PG 负责持久化主数据
 - Search Backend 负责检索
+- Milvus 替代/承担向量检索职责，不替代 PostgreSQL
 
 ### 4.3 embedding 写入时机
 

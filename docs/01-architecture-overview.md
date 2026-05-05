@@ -31,7 +31,7 @@ flowchart LR
     Web --> API["FastAPI API"]
     API --> Service["服务层"]
     Service --> DB["PostgreSQL / SQLite"]
-    Service --> Search["OpenSearch / Memory Hybrid Search"]
+    Service --> Search["Memory / OpenSearch / Milvus Retrieval"]
     Service --> Object["MinIO / 本地对象存储映射"]
     Service --> Temporal["Temporal Orchestrator"]
     Service --> Model["OpenAI-compatible Provider / Heuristic Fallback"]
@@ -62,7 +62,9 @@ flowchart LR
 ### 检索层
 
 - 开发模式：内存混合检索。
-- Docker/标准环境：OpenSearch 词法候选召回 + 本地 embedding rerank。
+- Milvus 模式：Milvus 负责向量召回，应用层负责融合排序和引用组装。
+- Docker/标准环境：保留 OpenSearch 词法候选召回路径，并新增 Milvus 向量召回路径；长期生产形态是 OpenSearch 负责词法召回、Milvus 负责向量召回、应用层融合排序。
+- PostgreSQL 仍然是 documents、chunks、jobs、traces、feedback、evals 等业务事实源。
 - 设计目标是对模型供应商保持解耦。
 
 ### 工作流层
@@ -83,6 +85,8 @@ flowchart LR
 
 - `DATABASE_URL=postgresql+psycopg://...`
 - `SEARCH_BACKEND=opensearch`
+- `SEARCH_BACKEND=milvus`
+- `SEARCH_BACKEND=hybrid`
 - `WORKFLOW_BACKEND=temporal`
 - 适合接近生产的端到端验证。
 
@@ -98,5 +102,5 @@ flowchart LR
 
 - 预留了文档可见性、ACL 引用、连接器来源字段。
 - 引入了 Temporal 和独立 worker。
-- 引入了 OpenSearch 适配器，而不是只停留在内存检索 demo。
+- 引入了 OpenSearch 词法检索适配器和 Milvus 向量检索适配器，而不是只停留在内存检索 demo。
 - 前端已经具备运营台雏形，而不是单纯 Swagger 演示。
