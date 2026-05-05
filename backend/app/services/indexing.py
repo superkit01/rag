@@ -115,9 +115,174 @@ class VectorRetriever(Protocol):
 
 
 class MilvusVectorRetriever:
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        self.args = args
-        self.kwargs = kwargs
+    def __init__(
+        self,
+        uri: str,
+        token: str | None,
+        collection_name: str | None = None,
+        vector_field: str = "embedding",
+        metric_type: str = "COSINE",
+        index_type: str = "AUTOINDEX",
+        dimensions: int = 1536,
+        client: object | None = None,
+        collection: str | None = None,
+    ) -> None:
+        self.uri = uri
+        self.token = token
+        self.collection_name = collection_name or collection
+        if not self.collection_name:
+            raise ValueError("Milvus collection_name is required.")
+        self.vector_field = vector_field
+        self.metric_type = metric_type
+        self.index_type = index_type
+        self.dimensions = dimensions
+        self._client = client
+        self._collection_ready = False
+
+    @property
+    def client(self) -> object:
+        if self._client is None:
+            self._client = self._build_client()
+        return self._client
+
+    def _build_client(self) -> object:
+        try:
+            from pymilvus import MilvusClient
+        except ImportError as exc:
+            raise RuntimeError("pymilvus is required when SEARCH_BACKEND uses Milvus.") from exc
+        return MilvusClient(uri=self.uri, token=self.token)
+
+    def upsert_vectors(self, chunks: list[IndexedChunk]) -> None:
+        rows = []
+        for chunk in chunks:
+            if chunk.chunk_type == "parent":
+                continue
+            self._validate_embedding(chunk.embedding)
+            rows.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    self.vector_field: chunk.embedding,
+                    "knowledge_space_id": chunk.knowledge_space_id,
+                    "document_id": chunk.document_id,
+                    "document_title": chunk.document_title,
+                    "fragment_id": chunk.fragment_id,
+                    "chunk_type": chunk.chunk_type,
+                    "parent_id": chunk.parent_id or "",
+                    "section_title": chunk.section_title,
+                    "heading_path": chunk.heading_path,
+                    "page_number": chunk.page_number,
+                    "content": chunk.content,
+                }
+            )
+        if not rows:
+            return
+        self._ensure_collection()
+        self.client.upsert(collection_name=self.collection_name, data=rows)
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        self.upsert_vectors(chunks)
+
+    def remove_document(self, document_id: str) -> None:
+        self._ensure_collection()
+        self.client.delete(collection_name=self.collection_name, filter=f'document_id == "{document_id}"')
+
+    def search(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[VectorCandidate]:
+        self._validate_embedding(query_embedding)
+        self._ensure_collection()
+        scalar_filter = self._build_filter(knowledge_space_id, document_ids)
+        response = self.client.search(
+            collection_name=self.collection_name,
+            data=[query_embedding],
+            anns_field=self.vector_field,
+            limit=top_k,
+            filter=scalar_filter,
+            output_fields=[
+                "chunk_id",
+                "knowledge_space_id",
+                "document_id",
+                "document_title",
+                "fragment_id",
+                "chunk_type",
+                "parent_id",
+                "section_title",
+                "heading_path",
+                "page_number",
+                "content",
+            ],
+        )
+        hits = response[0] if response else []
+        candidates: list[VectorCandidate] = []
+        for hit in hits:
+            source = hit.get("entity", hit)
+            parent_id = source.get("parent_id") or None
+            candidates.append(
+                VectorCandidate(
+                    chunk=IndexedChunk(
+                        chunk_id=source["chunk_id"],
+                        knowledge_space_id=source["knowledge_space_id"],
+                        document_id=source["document_id"],
+                        document_title=source["document_title"],
+                        fragment_id=source["fragment_id"],
+                        section_title=source["section_title"],
+                        heading_path=source.get("heading_path", []),
+                        page_number=source.get("page_number"),
+                        content=source["content"],
+                        embedding=[],
+                        chunk_type=source.get("chunk_type", "fixed"),
+                        parent_id=parent_id,
+                    ),
+                    semantic_score=round(float(hit.get("distance", 0.0)), 4),
+                )
+            )
+        return candidates
+
+    def retrieve(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[VectorCandidate]:
+        return self.search(query_embedding, knowledge_space_id, document_ids, top_k)
+
+    def _ensure_collection(self) -> None:
+        if self._collection_ready:
+            return
+        if not self.client.has_collection(collection_name=self.collection_name):
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                dimension=self.dimensions,
+                primary_field_name="chunk_id",
+                vector_field_name=self.vector_field,
+                metric_type=self.metric_type,
+                auto_id=False,
+            )
+            self.client.create_index(
+                collection_name=self.collection_name,
+                field_name=self.vector_field,
+                index_params={"index_type": self.index_type, "metric_type": self.metric_type},
+            )
+        self.client.load_collection(self.collection_name)
+        self._collection_ready = True
+
+    def _validate_embedding(self, embedding: list[float]) -> None:
+        if len(embedding) != self.dimensions:
+            raise ValueError(
+                "Embedding dimension mismatch. Rebuild the Milvus collection or configure matching embedding dimensions."
+            )
+
+    def _build_filter(self, knowledge_space_id: str, document_ids: list[str] | None) -> str:
+        scalar_filter = f'knowledge_space_id == "{knowledge_space_id}"'
+        if document_ids:
+            quoted_ids = ", ".join(f'"{document_id}"' for document_id in document_ids)
+            scalar_filter = f"{scalar_filter} and document_id in [{quoted_ids}]"
+        return scalar_filter
 
 
 def cosine_similarity(left: list[float], right: list[float]) -> float:
