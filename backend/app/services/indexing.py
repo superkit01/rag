@@ -471,7 +471,7 @@ class OpenSearchLexicalRetriever:
         document_ids: list[str] | None = None,
         top_k: int = 50,
     ) -> list[LexicalCandidate]:
-        return self.search(query, knowledge_space_id, document_ids, top_k)
+        return self.search(query, knowledge_space_id, document_ids, top_k, expand_query_size=False)
 
     def search(
         self,

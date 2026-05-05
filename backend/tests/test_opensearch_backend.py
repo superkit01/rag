@@ -155,6 +155,28 @@ def test_opensearch_lexical_retriever_returns_candidates() -> None:
     assert candidates[0].lexical_score == 1.0
 
 
+def test_opensearch_lexical_retriever_retrieve_uses_provided_candidate_limit() -> None:
+    search_sizes: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD" and request.url.path == "/rag_chunks":
+            return httpx.Response(200)
+        if request.method == "POST" and request.url.path == "/rag_chunks/_search":
+            search_sizes.append(json.loads(request.read().decode("utf-8"))["size"])
+            return httpx.Response(200, json={"hits": {"hits": []}})
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    retriever = OpenSearchLexicalRetriever(
+        base_url="http://opensearch:9200",
+        index_name="rag_chunks",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://opensearch:9200"),
+    )
+
+    retriever.retrieve("核心数据变更", "space-1", None, 15)
+
+    assert search_sizes == [15, 20]
+
+
 def test_opensearch_backend_semantic_score_uses_hit_embedding_without_local_upsert() -> None:
     provider = HashEmbeddingProvider(dimensions=4)
     query = "核心数据变更需要哪些前置条件？"
