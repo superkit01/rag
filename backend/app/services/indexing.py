@@ -398,23 +398,19 @@ class InMemorySearchBackend:
             self._store.chunks = {chunk.chunk_id: chunk for chunk in indexed}
 
 
-class OpenSearchSearchBackend(InMemorySearchBackend):
-    backend_name = "opensearch-hybrid"
-
+class OpenSearchLexicalRetriever:
     def __init__(
         self,
-        embedding_provider: EmbeddingProvider,
         base_url: str,
         index_name: str = "rag_chunks",
         client: httpx.Client | None = None,
     ) -> None:
-        super().__init__(embedding_provider)
         self.base_url = base_url.rstrip("/")
         self.index_name = index_name
         self.client = client or httpx.Client(base_url=self.base_url, timeout=10.0)
         self._index_ready = False
 
-    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+    def upsert_documents(self, chunks: list[IndexedChunk]) -> None:
         chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
         if not chunks:
             return
@@ -457,6 +453,9 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         if body.get("errors"):
             raise RuntimeError("OpenSearch bulk upsert reported item-level errors.")
 
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        self.upsert_documents(chunks)
+
     def remove_document(self, document_id: str) -> None:
         self._ensure_index()
         response = self.client.post(
@@ -465,13 +464,22 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         )
         self._raise_for_status(response, operation="delete document chunks")
 
+    def retrieve(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[LexicalCandidate]:
+        return self.search(query, knowledge_space_id, document_ids, top_k)
+
     def search(
         self,
         query: str,
         knowledge_space_id: str,
         document_ids: list[str] | None = None,
         top_k: int = 50,
-    ) -> list[SearchResult]:
+    ) -> list[LexicalCandidate]:
         self._ensure_index()
         query_tokens = tokenize_text(query)
         query_terms = " ".join(query_tokens) or query
@@ -519,40 +527,35 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
 
         max_raw_score = max((hit.get("_score") or 0.0) for hit in hits) if hits else 1.0
         max_raw_score = max(max_raw_score, 1.0)
-        query_embedding = self.embedding_provider.embed(query)
-        query_token_set = set(query_tokens)
 
-        results: list[SearchResult] = []
+        candidates: list[LexicalCandidate] = []
         for hit in hits:
             source = hit.get("_source", {})
             lexical_score = round((hit.get("_score") or 0.0) / max_raw_score, 4)
-            semantic_score = max(0.0, cosine_similarity(query_embedding, source.get("embedding", [])))
-            heading_terms = set((source.get("heading_path_terms") or "").split())
-            heading_boost = 0.08 if query_token_set & heading_terms else 0.0
-            combined = round((0.55 * lexical_score) + (0.45 * semantic_score) + heading_boost, 4)
-            if combined <= 0:
+            if lexical_score <= 0:
                 continue
-            results.append(
-                SearchResult(
-                    chunk_id=source["chunk_id"],
-                    knowledge_space_id=source["knowledge_space_id"],
-                    document_id=source["document_id"],
-                    document_title=source["document_title"],
-                    fragment_id=source["fragment_id"],
-                    section_title=source["section_title"],
-                    heading_path=source.get("heading_path", []),
-                    page_number=source.get("page_number"),
-                    content=source["content"],
-                    score=combined,
+            candidates.append(
+                LexicalCandidate(
+                    chunk=IndexedChunk(
+                        chunk_id=source["chunk_id"],
+                        knowledge_space_id=source["knowledge_space_id"],
+                        document_id=source["document_id"],
+                        document_title=source["document_title"],
+                        fragment_id=source["fragment_id"],
+                        section_title=source["section_title"],
+                        heading_path=source.get("heading_path", []),
+                        page_number=source.get("page_number"),
+                        content=source["content"],
+                        embedding=source.get("embedding", []),
+                        chunk_type=source.get("chunk_type", "fixed"),
+                        parent_id=source.get("parent_id"),
+                    ),
                     lexical_score=lexical_score,
-                    semantic_score=round(semantic_score, 4),
-                    chunk_type=source.get("chunk_type", "fixed"),
-                    parent_id=source.get("parent_id"),
                 )
             )
 
-        results.sort(key=lambda item: item.score, reverse=True)
-        return results[:top_k]
+        candidates.sort(key=lambda item: item.lexical_score, reverse=True)
+        return candidates[:top_k]
 
     def _ensure_index(self) -> None:
         if self._index_ready:
@@ -601,3 +604,56 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
 
     def _terms(self, value: str) -> str:
         return " ".join(tokenize_text(value))
+
+
+class OpenSearchSearchBackend(HybridSearchBackend):
+    backend_name = "opensearch-hybrid"
+
+    def __init__(
+        self,
+        embedding_provider: EmbeddingProvider,
+        base_url: str,
+        index_name: str = "rag_chunks",
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.embedding_provider = embedding_provider
+        self._store = MemoryChunkStore()
+        lexical = OpenSearchLexicalRetriever(base_url, index_name, client)
+        self.base_url = lexical.base_url
+        self.index_name = lexical.index_name
+        self.client = lexical.client
+        vector = MemoryVectorRetriever(embedding_provider, self._store)
+        super().__init__(self.backend_name, lexical, vector, embedding_provider)
+
+    @property
+    def _chunks(self) -> dict[str, IndexedChunk]:
+        return self._store.chunks
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
+        if not chunks:
+            return
+        self.lexical_retriever.upsert_chunks(chunks)
+        self.vector_retriever.upsert_chunks(chunks)
+
+    def bootstrap_from_database(self, db: Session) -> None:
+        chunks = db.query(Chunk).filter(Chunk.chunk_type.in_(("fixed", "child"))).all()
+        indexed = [
+            IndexedChunk(
+                chunk_id=chunk.id,
+                knowledge_space_id=chunk.knowledge_space_id,
+                document_id=chunk.document_id,
+                document_title=chunk.document.title,
+                fragment_id=chunk.fragment_id,
+                section_title=chunk.section_title,
+                heading_path=chunk.heading_path,
+                page_number=chunk.page_number,
+                content=chunk.content,
+                embedding=chunk.embedding,
+                chunk_type=chunk.chunk_type,
+                parent_id=chunk.parent_id,
+            )
+            for chunk in chunks
+        ]
+        with self._store.lock:
+            self._store.chunks = {chunk.chunk_id: chunk for chunk in indexed}

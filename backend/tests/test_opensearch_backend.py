@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import httpx
 
-from app.services.indexing import IndexedChunk, OpenSearchSearchBackend
+from app.services.indexing import IndexedChunk, OpenSearchLexicalRetriever, OpenSearchSearchBackend
 from app.services.llm import HashEmbeddingProvider
 
 
 def test_opensearch_backend_indexes_and_reranks() -> None:
     calls: list[tuple[str, str]] = []
+    provider = HashEmbeddingProvider(dimensions=4)
+    indexed_content = "核心数据变更必须完成测试准入和回滚预案确认。"
+    indexed_embedding = provider.embed(indexed_content)
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append((request.method, request.url.path))
@@ -35,8 +38,8 @@ def test_opensearch_backend_indexes_and_reranks() -> None:
                                     "heading_path": ["发布管理规范", "发布前检查"],
                                     "heading_path_terms": "发 布 发布 前 检 检查",
                                     "page_number": None,
-                                    "content": "核心数据变更必须完成测试准入和回滚预案确认。",
-                                    "embedding": [0.2, 0.1, 0.3, 0.4],
+                                    "content": indexed_content,
+                                    "embedding": indexed_embedding,
                                 },
                             },
                             {
@@ -62,7 +65,7 @@ def test_opensearch_backend_indexes_and_reranks() -> None:
         raise AssertionError(f"Unexpected request: {request.method} {request.url}")
 
     backend = OpenSearchSearchBackend(
-        HashEmbeddingProvider(dimensions=4),
+        provider,
         base_url="http://opensearch:9200",
         index_name="rag_chunks",
         client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://opensearch:9200"),
@@ -79,8 +82,8 @@ def test_opensearch_backend_indexes_and_reranks() -> None:
                 section_title="发布前检查",
                 heading_path=["发布管理规范", "发布前检查"],
                 page_number=None,
-                content="核心数据变更必须完成测试准入和回滚预案确认。",
-                embedding=[0.2, 0.1, 0.3, 0.4],
+                content=indexed_content,
+                embedding=indexed_embedding,
             )
         ]
     )
@@ -89,4 +92,51 @@ def test_opensearch_backend_indexes_and_reranks() -> None:
     assert calls[:3] == [("HEAD", "/rag_chunks"), ("PUT", "/rag_chunks"), ("POST", "/_bulk")]
     assert results
     assert results[0].document_id == "doc-1"
+    assert results[0].semantic_score > 0
     assert results[0].score >= results[0].semantic_score
+
+
+def test_opensearch_lexical_retriever_returns_candidates() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "HEAD" and request.url.path == "/rag_chunks":
+            return httpx.Response(200)
+        if request.method == "POST" and request.url.path == "/rag_chunks/_search":
+            return httpx.Response(
+                200,
+                json={
+                    "hits": {
+                        "hits": [
+                            {
+                                "_score": 4.0,
+                                "_source": {
+                                    "chunk_id": "chunk-1",
+                                    "knowledge_space_id": "space-1",
+                                    "document_id": "doc-1",
+                                    "document_title": "发布管理规范.md",
+                                    "fragment_id": "frag-1",
+                                    "chunk_type": "fixed",
+                                    "parent_id": None,
+                                    "section_title": "发布前检查",
+                                    "heading_path": ["发布管理规范", "发布前检查"],
+                                    "page_number": None,
+                                    "content": "核心数据变更必须完成测试准入和回滚预案确认。",
+                                    "embedding": [0.2, 0.1, 0.3, 0.4],
+                                },
+                            }
+                        ]
+                    }
+                },
+            )
+        raise AssertionError(f"Unexpected request: {request.method} {request.url}")
+
+    retriever = OpenSearchLexicalRetriever(
+        base_url="http://opensearch:9200",
+        index_name="rag_chunks",
+        client=httpx.Client(transport=httpx.MockTransport(handler), base_url="http://opensearch:9200"),
+    )
+
+    candidates = retriever.search("核心数据变更", "space-1", None, 5)
+
+    assert len(candidates) == 1
+    assert candidates[0].chunk.chunk_id == "chunk-1"
+    assert candidates[0].lexical_score == 1.0
