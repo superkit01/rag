@@ -619,6 +619,7 @@ class OpenSearchSearchBackend(HybridSearchBackend):
         self.embedding_provider = embedding_provider
         self._store = MemoryChunkStore()
         lexical = OpenSearchLexicalRetriever(base_url, index_name, client)
+        self._opensearch_lexical_retriever = lexical
         self.base_url = lexical.base_url
         self.index_name = lexical.index_name
         self.client = lexical.client
@@ -634,7 +635,6 @@ class OpenSearchSearchBackend(HybridSearchBackend):
         if not chunks:
             return
         self.lexical_retriever.upsert_chunks(chunks)
-        self.vector_retriever.upsert_chunks(chunks)
 
     def bootstrap_from_database(self, db: Session) -> None:
         chunks = db.query(Chunk).filter(Chunk.chunk_type.in_(("fixed", "child"))).all()
@@ -657,3 +657,21 @@ class OpenSearchSearchBackend(HybridSearchBackend):
         ]
         with self._store.lock:
             self._store.chunks = {chunk.chunk_id: chunk for chunk in indexed}
+
+    def search(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[SearchResult]:
+        lexical_candidates = self._opensearch_lexical_retriever.search(query, knowledge_space_id, document_ids, top_k)
+        query_embedding = self.embedding_provider.embed(query)
+        vector_candidates = [
+            VectorCandidate(
+                chunk=candidate.chunk,
+                semantic_score=max(0.0, cosine_similarity(query_embedding, candidate.chunk.embedding)),
+            )
+            for candidate in lexical_candidates
+        ]
+        return self.fusion.merge(query, lexical_candidates, vector_candidates, top_k)
