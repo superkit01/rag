@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from dataclasses import replace
 import json
 import math
 import threading
@@ -250,7 +249,7 @@ class MemoryVectorRetriever:
             for chunk in chunks:
                 if chunk.chunk_type == "parent":
                     continue
-                self.store.chunks[chunk.chunk_id] = replace(chunk, embedding=self.embedding_provider.embed(chunk.content))
+                self.store.chunks[chunk.chunk_id] = chunk
 
     def remove_document(self, document_id: str) -> None:
         with self.store.lock:
