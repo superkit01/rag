@@ -150,7 +150,9 @@ class MilvusVectorRetriever:
             from pymilvus import MilvusClient
         except ImportError as exc:
             raise RuntimeError("pymilvus is required when SEARCH_BACKEND uses Milvus.") from exc
-        return MilvusClient(uri=self.uri, token=self.token)
+        if self.token:
+            return MilvusClient(uri=self.uri, token=self.token)
+        return MilvusClient(uri=self.uri)
 
     def upsert_vectors(self, chunks: list[IndexedChunk]) -> None:
         rows = []
