@@ -47,6 +47,18 @@ class SearchResult:
     parent_id: str | None = None
 
 
+@dataclass(slots=True)
+class LexicalCandidate:
+    chunk: IndexedChunk
+    lexical_score: float
+
+
+@dataclass(slots=True)
+class VectorCandidate:
+    chunk: IndexedChunk
+    semantic_score: float
+
+
 class EmbeddingProvider(Protocol):
     def embed(self, text: str) -> list[float]:
         ...
@@ -68,6 +80,213 @@ class SearchBackend(Protocol):
         ...
 
 
+class LexicalRetriever(Protocol):
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        raise NotImplementedError
+
+    def remove_document(self, document_id: str) -> None:
+        raise NotImplementedError
+
+    def retrieve(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None,
+        top_k: int,
+    ) -> list[LexicalCandidate]:
+        raise NotImplementedError
+
+
+class VectorRetriever(Protocol):
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        raise NotImplementedError
+
+    def remove_document(self, document_id: str) -> None:
+        raise NotImplementedError
+
+    def retrieve(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None,
+        top_k: int,
+    ) -> list[VectorCandidate]:
+        raise NotImplementedError
+
+
+class MilvusVectorRetriever:
+    def __init__(
+        self,
+        uri: str,
+        token: str | None,
+        collection_name: str | None = None,
+        vector_field: str = "embedding",
+        metric_type: str = "COSINE",
+        index_type: str = "AUTOINDEX",
+        dimensions: int = 1536,
+        client: object | None = None,
+        collection: str | None = None,
+    ) -> None:
+        self.uri = uri
+        self.token = token
+        self.collection_name = collection_name or collection
+        if not self.collection_name:
+            raise ValueError("Milvus collection_name is required.")
+        self.vector_field = vector_field
+        self.metric_type = metric_type
+        self.index_type = index_type
+        self.dimensions = dimensions
+        self._client = client
+        self._collection_ready = False
+
+    @property
+    def client(self) -> object:
+        if self._client is None:
+            self._client = self._build_client()
+        return self._client
+
+    def _build_client(self) -> object:
+        try:
+            from pymilvus import MilvusClient
+        except ImportError as exc:
+            raise RuntimeError("pymilvus is required when SEARCH_BACKEND uses Milvus.") from exc
+        if self.token:
+            return MilvusClient(uri=self.uri, token=self.token)
+        return MilvusClient(uri=self.uri)
+
+    def upsert_vectors(self, chunks: list[IndexedChunk]) -> None:
+        rows = []
+        for chunk in chunks:
+            if chunk.chunk_type == "parent":
+                continue
+            self._validate_embedding(chunk.embedding)
+            rows.append(
+                {
+                    "chunk_id": chunk.chunk_id,
+                    self.vector_field: chunk.embedding,
+                    "knowledge_space_id": chunk.knowledge_space_id,
+                    "document_id": chunk.document_id,
+                    "document_title": chunk.document_title,
+                    "fragment_id": chunk.fragment_id,
+                    "chunk_type": chunk.chunk_type,
+                    "parent_id": chunk.parent_id or "",
+                    "section_title": chunk.section_title,
+                    "heading_path": chunk.heading_path,
+                    "page_number": chunk.page_number,
+                    "content": chunk.content,
+                }
+            )
+        if not rows:
+            return
+        self._ensure_collection()
+        self.client.upsert(collection_name=self.collection_name, data=rows)
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        self.upsert_vectors(chunks)
+
+    def remove_document(self, document_id: str) -> None:
+        self._ensure_collection()
+        self.client.delete(collection_name=self.collection_name, filter=f'document_id == "{document_id}"')
+
+    def search(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[VectorCandidate]:
+        self._validate_embedding(query_embedding)
+        self._ensure_collection()
+        scalar_filter = self._build_filter(knowledge_space_id, document_ids)
+        response = self.client.search(
+            collection_name=self.collection_name,
+            data=[query_embedding],
+            anns_field=self.vector_field,
+            limit=top_k,
+            filter=scalar_filter,
+            output_fields=[
+                "chunk_id",
+                "knowledge_space_id",
+                "document_id",
+                "document_title",
+                "fragment_id",
+                "chunk_type",
+                "parent_id",
+                "section_title",
+                "heading_path",
+                "page_number",
+                "content",
+            ],
+        )
+        hits = response[0] if response else []
+        candidates: list[VectorCandidate] = []
+        for hit in hits:
+            source = hit.get("entity", hit)
+            parent_id = source.get("parent_id") or None
+            candidates.append(
+                VectorCandidate(
+                    chunk=IndexedChunk(
+                        chunk_id=source["chunk_id"],
+                        knowledge_space_id=source["knowledge_space_id"],
+                        document_id=source["document_id"],
+                        document_title=source["document_title"],
+                        fragment_id=source["fragment_id"],
+                        section_title=source["section_title"],
+                        heading_path=source.get("heading_path", []),
+                        page_number=source.get("page_number"),
+                        content=source["content"],
+                        embedding=[],
+                        chunk_type=source.get("chunk_type", "fixed"),
+                        parent_id=parent_id,
+                    ),
+                    semantic_score=round(float(hit.get("distance", 0.0)), 4),
+                )
+            )
+        return candidates
+
+    def retrieve(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[VectorCandidate]:
+        return self.search(query_embedding, knowledge_space_id, document_ids, top_k)
+
+    def _ensure_collection(self) -> None:
+        if self._collection_ready:
+            return
+        if not self.client.has_collection(collection_name=self.collection_name):
+            self.client.create_collection(
+                collection_name=self.collection_name,
+                dimension=self.dimensions,
+                primary_field_name="chunk_id",
+                vector_field_name=self.vector_field,
+                metric_type=self.metric_type,
+                auto_id=False,
+            )
+            self.client.create_index(
+                collection_name=self.collection_name,
+                field_name=self.vector_field,
+                index_params={"index_type": self.index_type, "metric_type": self.metric_type},
+            )
+        self.client.load_collection(self.collection_name)
+        self._collection_ready = True
+
+    def _validate_embedding(self, embedding: list[float]) -> None:
+        if len(embedding) != self.dimensions:
+            raise ValueError(
+                "Embedding dimension mismatch. Rebuild the Milvus collection or configure matching embedding dimensions."
+            )
+
+    def _build_filter(self, knowledge_space_id: str, document_ids: list[str] | None) -> str:
+        scalar_filter = f'knowledge_space_id == "{knowledge_space_id}"'
+        if document_ids:
+            quoted_ids = ", ".join(f'"{document_id}"' for document_id in document_ids)
+            scalar_filter = f"{scalar_filter} and document_id in [{quoted_ids}]"
+        return scalar_filter
+
+
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right:
         return 0.0
@@ -81,42 +300,37 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     return numerator / (left_norm * right_norm)
 
 
-class InMemorySearchBackend:
-    backend_name = "memory-hybrid"
-
-    def __init__(self, embedding_provider: EmbeddingProvider) -> None:
-        self.embedding_provider = embedding_provider
-        self._chunks: dict[str, IndexedChunk] = {}
-        self._lock = threading.RLock()
-
-    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
-        with self._lock:
-            for chunk in chunks:
-                if chunk.chunk_type == "parent":
-                    continue
-                self._chunks[chunk.chunk_id] = chunk
-
-    def remove_document(self, document_id: str) -> None:
-        with self._lock:
-            to_remove = [chunk_id for chunk_id, chunk in self._chunks.items() if chunk.document_id == document_id]
-            for chunk_id in to_remove:
-                self._chunks.pop(chunk_id, None)
-
-    def search(self, query: str, knowledge_space_id: str, document_ids: list[str] | None = None, top_k: int = 50) -> list[SearchResult]:
+class ResultFusion:
+    def merge(
+        self,
+        query: str,
+        lexical_candidates: list[LexicalCandidate],
+        vector_candidates: list[VectorCandidate],
+        top_k: int,
+    ) -> list[SearchResult]:
         query_tokens = set(tokenize_text(query))
-        query_embedding = self.embedding_provider.embed(query)
+        by_chunk_id: dict[str, dict[str, object]] = {}
+
+        for candidate in lexical_candidates:
+            entry = by_chunk_id.setdefault(
+                candidate.chunk.chunk_id,
+                {"chunk": candidate.chunk, "lexical_score": 0.0, "semantic_score": 0.0},
+            )
+            entry["lexical_score"] = max(float(entry["lexical_score"]), candidate.lexical_score)
+
+        for candidate in vector_candidates:
+            entry = by_chunk_id.setdefault(
+                candidate.chunk.chunk_id,
+                {"chunk": candidate.chunk, "lexical_score": 0.0, "semantic_score": 0.0},
+            )
+            entry["semantic_score"] = max(float(entry["semantic_score"]), candidate.semantic_score)
+
         results: list[SearchResult] = []
-        allowed_document_ids = set(document_ids or [])
-        with self._lock:
-            chunks = list(self._chunks.values())
-        for chunk in chunks:
-            if chunk.knowledge_space_id != knowledge_space_id:
-                continue
-            if allowed_document_ids and chunk.document_id not in allowed_document_ids:
-                continue
-            content_tokens = set(tokenize_text(chunk.content))
-            lexical_score = len(query_tokens & content_tokens) / max(1, len(query_tokens))
-            semantic_score = max(0.0, cosine_similarity(query_embedding, chunk.embedding))
+        for entry in by_chunk_id.values():
+            chunk = entry["chunk"]
+            assert isinstance(chunk, IndexedChunk)
+            lexical_score = round(float(entry["lexical_score"]), 4)
+            semantic_score = round(float(entry["semantic_score"]), 4)
             heading_boost = 0.08 if query_tokens & set(tokenize_text(" ".join(chunk.heading_path))) else 0.0
             combined = round((0.55 * lexical_score) + (0.45 * semantic_score) + heading_boost, 4)
             if combined <= 0:
@@ -142,6 +356,192 @@ class InMemorySearchBackend:
         results.sort(key=lambda item: item.score, reverse=True)
         return results[:top_k]
 
+
+class MemoryChunkStore:
+    def __init__(self) -> None:
+        self.chunks: dict[str, IndexedChunk] = {}
+        self.lock = threading.RLock()
+
+
+class MemoryLexicalRetriever:
+    def __init__(self, store: MemoryChunkStore | None = None) -> None:
+        self.store = store or MemoryChunkStore()
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        with self.store.lock:
+            for chunk in chunks:
+                if chunk.chunk_type == "parent":
+                    continue
+                self.store.chunks[chunk.chunk_id] = chunk
+
+    def remove_document(self, document_id: str) -> None:
+        with self.store.lock:
+            to_remove = [chunk_id for chunk_id, chunk in self.store.chunks.items() if chunk.document_id == document_id]
+            for chunk_id in to_remove:
+                self.store.chunks.pop(chunk_id, None)
+
+    def retrieve(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[LexicalCandidate]:
+        query_tokens = set(tokenize_text(query))
+        allowed_document_ids = set(document_ids or [])
+        candidates: list[LexicalCandidate] = []
+        with self.store.lock:
+            chunks = list(self.store.chunks.values())
+        for chunk in chunks:
+            if chunk.knowledge_space_id != knowledge_space_id:
+                continue
+            if allowed_document_ids and chunk.document_id not in allowed_document_ids:
+                continue
+            content_tokens = set(tokenize_text(chunk.content))
+            lexical_score = len(query_tokens & content_tokens) / max(1, len(query_tokens))
+            if lexical_score <= 0:
+                continue
+            candidates.append(LexicalCandidate(chunk=chunk, lexical_score=lexical_score))
+        candidates.sort(key=lambda item: item.lexical_score, reverse=True)
+        return candidates[:top_k]
+
+
+class MemoryVectorRetriever:
+    def __init__(self, embedding_provider: EmbeddingProvider, store: MemoryChunkStore | None = None) -> None:
+        self.embedding_provider = embedding_provider
+        self.store = store or MemoryChunkStore()
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        with self.store.lock:
+            for chunk in chunks:
+                if chunk.chunk_type == "parent":
+                    continue
+                self.store.chunks[chunk.chunk_id] = chunk
+
+    def remove_document(self, document_id: str) -> None:
+        with self.store.lock:
+            to_remove = [chunk_id for chunk_id, chunk in self.store.chunks.items() if chunk.document_id == document_id]
+            for chunk_id in to_remove:
+                self.store.chunks.pop(chunk_id, None)
+
+    def retrieve(
+        self,
+        query_embedding: list[float],
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[VectorCandidate]:
+        allowed_document_ids = set(document_ids or [])
+        candidates: list[VectorCandidate] = []
+        with self.store.lock:
+            chunks = list(self.store.chunks.values())
+        for chunk in chunks:
+            if chunk.knowledge_space_id != knowledge_space_id:
+                continue
+            if allowed_document_ids and chunk.document_id not in allowed_document_ids:
+                continue
+            semantic_score = max(0.0, cosine_similarity(query_embedding, chunk.embedding))
+            if semantic_score <= 0:
+                continue
+            candidates.append(VectorCandidate(chunk=chunk, semantic_score=semantic_score))
+        candidates.sort(key=lambda item: item.semantic_score, reverse=True)
+        return candidates[:top_k]
+
+
+class NullLexicalRetriever:
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        del chunks
+
+    def remove_document(self, document_id: str) -> None:
+        del document_id
+
+    def retrieve(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[LexicalCandidate]:
+        del query, knowledge_space_id, document_ids, top_k
+        return []
+
+
+class HybridSearchBackend:
+    def __init__(
+        self,
+        backend_name: str,
+        lexical_retriever: LexicalRetriever,
+        vector_retriever: VectorRetriever,
+        embedding_provider: EmbeddingProvider,
+        fusion: ResultFusion | None = None,
+        candidate_top_k_multiplier: int | None = 3,
+    ) -> None:
+        self.backend_name = backend_name
+        self.lexical_retriever = lexical_retriever
+        self.vector_retriever = vector_retriever
+        self.embedding_provider = embedding_provider
+        self.fusion = fusion or ResultFusion()
+        self.candidate_top_k_multiplier = candidate_top_k_multiplier
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
+        self.lexical_retriever.upsert_chunks(chunks)
+        self.vector_retriever.upsert_chunks(chunks)
+
+    def remove_document(self, document_id: str) -> None:
+        self.lexical_retriever.remove_document(document_id)
+        self.vector_retriever.remove_document(document_id)
+
+    def search(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[SearchResult]:
+        query_embedding = self.embedding_provider.embed(query)
+        expanded_top_k = self._candidate_top_k(top_k)
+        lexical_candidates = self.lexical_retriever.retrieve(query, knowledge_space_id, document_ids, expanded_top_k)
+        vector_candidates = self.vector_retriever.retrieve(query_embedding, knowledge_space_id, document_ids, expanded_top_k)
+        return self.fusion.merge(query, lexical_candidates, vector_candidates, top_k)
+
+    def _candidate_top_k(self, top_k: int) -> int:
+        if self.candidate_top_k_multiplier is not None:
+            return max(top_k * self.candidate_top_k_multiplier, top_k)
+        store = getattr(self.lexical_retriever, "store", None) or getattr(self.vector_retriever, "store", None)
+        chunks = getattr(store, "chunks", None)
+        if chunks is not None:
+            return max(len(chunks), top_k)
+        return max(top_k * 1000, top_k)
+
+
+class InMemorySearchBackend:
+    backend_name = "memory-hybrid"
+
+    def __init__(self, embedding_provider: EmbeddingProvider) -> None:
+        self.embedding_provider = embedding_provider
+        self._store = MemoryChunkStore()
+        self._backend = HybridSearchBackend(
+            self.backend_name,
+            MemoryLexicalRetriever(self._store),
+            MemoryVectorRetriever(embedding_provider, self._store),
+            embedding_provider,
+            candidate_top_k_multiplier=None,
+        )
+
+    @property
+    def _chunks(self) -> dict[str, IndexedChunk]:
+        return self._store.chunks
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        self._backend.upsert_chunks(chunks)
+
+    def remove_document(self, document_id: str) -> None:
+        self._backend.remove_document(document_id)
+
+    def search(self, query: str, knowledge_space_id: str, document_ids: list[str] | None = None, top_k: int = 50) -> list[SearchResult]:
+        return self._backend.search(query, knowledge_space_id, document_ids, top_k)
+
     def bootstrap_from_database(self, db: Session) -> None:
         chunks = db.query(Chunk).filter(Chunk.chunk_type.in_(("fixed", "child"))).all()
         indexed = [
@@ -161,27 +561,23 @@ class InMemorySearchBackend:
             )
             for chunk in chunks
         ]
-        with self._lock:
-            self._chunks = {chunk.chunk_id: chunk for chunk in indexed}
+        with self._store.lock:
+            self._store.chunks = {chunk.chunk_id: chunk for chunk in indexed}
 
 
-class OpenSearchSearchBackend(InMemorySearchBackend):
-    backend_name = "opensearch-hybrid"
-
+class OpenSearchLexicalRetriever:
     def __init__(
         self,
-        embedding_provider: EmbeddingProvider,
         base_url: str,
         index_name: str = "rag_chunks",
         client: httpx.Client | None = None,
     ) -> None:
-        super().__init__(embedding_provider)
         self.base_url = base_url.rstrip("/")
         self.index_name = index_name
         self.client = client or httpx.Client(base_url=self.base_url, timeout=10.0)
         self._index_ready = False
 
-    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+    def upsert_documents(self, chunks: list[IndexedChunk]) -> None:
         chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
         if not chunks:
             return
@@ -224,6 +620,9 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         if body.get("errors"):
             raise RuntimeError("OpenSearch bulk upsert reported item-level errors.")
 
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        self.upsert_documents(chunks)
+
     def remove_document(self, document_id: str) -> None:
         self._ensure_index()
         response = self.client.post(
@@ -232,13 +631,24 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         )
         self._raise_for_status(response, operation="delete document chunks")
 
+    def retrieve(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[LexicalCandidate]:
+        return self.search(query, knowledge_space_id, document_ids, top_k, expand_query_size=False)
+
     def search(
         self,
         query: str,
         knowledge_space_id: str,
         document_ids: list[str] | None = None,
         top_k: int = 50,
-    ) -> list[SearchResult]:
+        *,
+        expand_query_size: bool = True,
+    ) -> list[LexicalCandidate]:
         self._ensure_index()
         query_tokens = tokenize_text(query)
         query_terms = " ".join(query_tokens) or query
@@ -246,8 +656,9 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
         if document_ids:
             filters.append({"terms": {"document_id": document_ids}})
 
+        query_size = max(top_k * 3, top_k) if expand_query_size else top_k
         body = {
-            "size": max(top_k * 3, top_k),
+            "size": query_size,
             "_source": True,
             "query": {
                 "bool": {
@@ -286,40 +697,33 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
 
         max_raw_score = max((hit.get("_score") or 0.0) for hit in hits) if hits else 1.0
         max_raw_score = max(max_raw_score, 1.0)
-        query_embedding = self.embedding_provider.embed(query)
-        query_token_set = set(query_tokens)
 
-        results: list[SearchResult] = []
+        candidates: list[LexicalCandidate] = []
         for hit in hits:
             source = hit.get("_source", {})
             lexical_score = round((hit.get("_score") or 0.0) / max_raw_score, 4)
-            semantic_score = max(0.0, cosine_similarity(query_embedding, source.get("embedding", [])))
-            heading_terms = set((source.get("heading_path_terms") or "").split())
-            heading_boost = 0.08 if query_token_set & heading_terms else 0.0
-            combined = round((0.55 * lexical_score) + (0.45 * semantic_score) + heading_boost, 4)
-            if combined <= 0:
-                continue
-            results.append(
-                SearchResult(
-                    chunk_id=source["chunk_id"],
-                    knowledge_space_id=source["knowledge_space_id"],
-                    document_id=source["document_id"],
-                    document_title=source["document_title"],
-                    fragment_id=source["fragment_id"],
-                    section_title=source["section_title"],
-                    heading_path=source.get("heading_path", []),
-                    page_number=source.get("page_number"),
-                    content=source["content"],
-                    score=combined,
+            candidates.append(
+                LexicalCandidate(
+                    chunk=IndexedChunk(
+                        chunk_id=source["chunk_id"],
+                        knowledge_space_id=source["knowledge_space_id"],
+                        document_id=source["document_id"],
+                        document_title=source["document_title"],
+                        fragment_id=source["fragment_id"],
+                        section_title=source["section_title"],
+                        heading_path=source.get("heading_path", []),
+                        page_number=source.get("page_number"),
+                        content=source["content"],
+                        embedding=source.get("embedding", []),
+                        chunk_type=source.get("chunk_type", "fixed"),
+                        parent_id=source.get("parent_id"),
+                    ),
                     lexical_score=lexical_score,
-                    semantic_score=round(semantic_score, 4),
-                    chunk_type=source.get("chunk_type", "fixed"),
-                    parent_id=source.get("parent_id"),
                 )
             )
 
-        results.sort(key=lambda item: item.score, reverse=True)
-        return results[:top_k]
+        candidates.sort(key=lambda item: item.lexical_score, reverse=True)
+        return candidates[:top_k]
 
     def _ensure_index(self) -> None:
         if self._index_ready:
@@ -368,3 +772,81 @@ class OpenSearchSearchBackend(InMemorySearchBackend):
 
     def _terms(self, value: str) -> str:
         return " ".join(tokenize_text(value))
+
+
+class OpenSearchSearchBackend(HybridSearchBackend):
+    backend_name = "opensearch-hybrid"
+
+    def __init__(
+        self,
+        embedding_provider: EmbeddingProvider,
+        base_url: str,
+        index_name: str = "rag_chunks",
+        client: httpx.Client | None = None,
+    ) -> None:
+        self.embedding_provider = embedding_provider
+        self._store = MemoryChunkStore()
+        lexical = OpenSearchLexicalRetriever(base_url, index_name, client)
+        self._opensearch_lexical_retriever = lexical
+        self.base_url = lexical.base_url
+        self.index_name = lexical.index_name
+        self.client = lexical.client
+        vector = MemoryVectorRetriever(embedding_provider, self._store)
+        super().__init__(self.backend_name, lexical, vector, embedding_provider)
+
+    @property
+    def _chunks(self) -> dict[str, IndexedChunk]:
+        return self._store.chunks
+
+    def upsert_chunks(self, chunks: list[IndexedChunk]) -> None:
+        chunks = [chunk for chunk in chunks if chunk.chunk_type != "parent"]
+        if not chunks:
+            return
+        self.lexical_retriever.upsert_chunks(chunks)
+
+    def bootstrap_from_database(self, db: Session) -> None:
+        chunks = db.query(Chunk).filter(Chunk.chunk_type.in_(("fixed", "child"))).all()
+        indexed = [
+            IndexedChunk(
+                chunk_id=chunk.id,
+                knowledge_space_id=chunk.knowledge_space_id,
+                document_id=chunk.document_id,
+                document_title=chunk.document.title,
+                fragment_id=chunk.fragment_id,
+                section_title=chunk.section_title,
+                heading_path=chunk.heading_path,
+                page_number=chunk.page_number,
+                content=chunk.content,
+                embedding=chunk.embedding,
+                chunk_type=chunk.chunk_type,
+                parent_id=chunk.parent_id,
+            )
+            for chunk in chunks
+        ]
+        with self._store.lock:
+            self._store.chunks = {chunk.chunk_id: chunk for chunk in indexed}
+
+    def search(
+        self,
+        query: str,
+        knowledge_space_id: str,
+        document_ids: list[str] | None = None,
+        top_k: int = 50,
+    ) -> list[SearchResult]:
+        expanded_top_k = self._candidate_top_k(top_k)
+        lexical_candidates = self._opensearch_lexical_retriever.search(
+            query,
+            knowledge_space_id,
+            document_ids,
+            expanded_top_k,
+            expand_query_size=False,
+        )
+        query_embedding = self.embedding_provider.embed(query)
+        vector_candidates = [
+            VectorCandidate(
+                chunk=candidate.chunk,
+                semantic_score=max(0.0, cosine_similarity(query_embedding, candidate.chunk.embedding)),
+            )
+            for candidate in lexical_candidates
+        ]
+        return self.fusion.merge(query, lexical_candidates, vector_candidates, top_k)

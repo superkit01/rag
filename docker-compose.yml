@@ -35,6 +35,24 @@ services:
         soft: 65536
         hard: 65536
 
+  milvus:
+    image: docker.m.daocloud.io/milvusdb/milvus:v2.4.15
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_USE_EMBED: "true"
+      ETCD_DATA_DIR: /var/lib/milvus/etcd
+      COMMON_STORAGETYPE: local
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    volumes:
+      - milvus_data:/var/lib/milvus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
   minio:
     image: docker.m.daocloud.io/minio/minio:latest
     command: server /data --console-address ":9001"
@@ -73,4 +91,5 @@ services:
 volumes:
   postgres_data:
   opensearch_data:
+  milvus_data:
   minio_data:

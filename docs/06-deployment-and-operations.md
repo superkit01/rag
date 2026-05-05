@@ -28,18 +28,19 @@ pnpm dev
 先启动中间件：
 
 ```bash
-docker compose up -d postgres redis opensearch minio temporal temporal-ui
+docker compose up -d postgres redis opensearch milvus minio temporal temporal-ui
 ```
 
 宿主机启动 API：
 
 ```bash
 cd backend
-export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch
+export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch | milvus | hybrid
 DATABASE_URL=postgresql+psycopg://rag:rag@localhost:5432/rag \
 WORKFLOW_BACKEND=temporal \
 SEARCH_BACKEND=$SEARCH_BACKEND \
 OPENSEARCH_URL=http://localhost:9200 \
+MILVUS_URI=http://localhost:19530 \
 OBJECT_STORAGE_BACKEND=minio \
 OBJECT_STORAGE_ENDPOINT=http://localhost:9000 \
 OBJECT_STORAGE_BUCKET=rag-documents \
@@ -55,11 +56,12 @@ TEMPORAL_TASK_QUEUE=rag-jobs \
 
 ```bash
 cd backend
-export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch
+export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch | milvus | hybrid
 DATABASE_URL=postgresql+psycopg://rag:rag@localhost:5432/rag \
 WORKFLOW_BACKEND=temporal \
 SEARCH_BACKEND=$SEARCH_BACKEND \
 OPENSEARCH_URL=http://localhost:9200 \
+MILVUS_URI=http://localhost:19530 \
 OBJECT_STORAGE_BACKEND=minio \
 OBJECT_STORAGE_ENDPOINT=http://localhost:9000 \
 OBJECT_STORAGE_BUCKET=rag-documents \
@@ -79,12 +81,25 @@ NEXT_PUBLIC_API_BASE_URL=http://localhost:8000/api \
 pnpm dev
 ```
 
+如果只想验证 Milvus 向量检索，可以把 API/worker 的检索配置切到：
+
+```bash
+SEARCH_BACKEND=milvus \
+MILVUS_URI=http://localhost:19530 \
+MILVUS_COLLECTION=rag_chunks \
+MILVUS_METRIC_TYPE=COSINE \
+MILVUS_INDEX_TYPE=AUTOINDEX \
+.venv/bin/python -m uvicorn app.main:app --reload --port 8000
+```
+
 说明：
 
 - 这种模式下，本地文件上传会把原始文件持久化到 MinIO，因此 `OBJECT_STORAGE_BACKEND` 需要设置为 `minio`。
-- `SEARCH_BACKEND` 当前兼容 `memory` 和 `opensearch`：
-  - `memory`：不依赖 OpenSearch，适合快速本地开发
-  - `opensearch`：连接 `localhost:9200`，更接近正式部署
+- `SEARCH_BACKEND` 当前兼容 `memory`、`opensearch`、`milvus` 和 `hybrid`：
+  - `memory`：不依赖外部检索服务，适合快速本地开发
+  - `opensearch`：连接 `localhost:9200`，使用 OpenSearch 词法召回和本地 embedding rerank
+  - `milvus`：连接 `localhost:19530`，使用 Milvus 向量召回
+  - `hybrid`：OpenSearch 词法召回 + Milvus 向量召回
 - 如果你已经把这些变量写进仓库根目录 `.env`，可以先执行 `set -a && source .env && set +a`，再运行上面的命令。
 - 浏览器侧访问地址：
   - Web：`http://localhost:3000`
@@ -98,6 +113,7 @@ pnpm dev
 - `postgres`
 - `redis`
 - `opensearch`
+- `milvus`
 - `minio`
 - `temporal`
 - `temporal-ui`
@@ -105,7 +121,8 @@ pnpm dev
 职责划分：
 
 - `temporal`：任务编排
-- `opensearch`：混合检索候选召回
+- `opensearch`：词法检索候选召回
+- `milvus`：向量检索候选召回
 - `postgres`：主数据和评测数据
 - `minio`：对象存储模拟
 - `redis`：预留缓存与限流
@@ -118,6 +135,10 @@ pnpm dev
 - `REDIS_URL`
 - `OPENSEARCH_URL`
 - `OPENSEARCH_INDEX`
+- `MILVUS_URI`
+- `MILVUS_COLLECTION`
+- `MILVUS_METRIC_TYPE`
+- `MILVUS_INDEX_TYPE`
 - `OBJECT_STORAGE_BACKEND`
 - `OBJECT_STORAGE_ENDPOINT`
 - `OBJECT_STORAGE_BUCKET`
@@ -159,13 +180,13 @@ pnpm dev
 ### 宿主机跑应用，容器跑中间件
 
 - 适合需要热更新的联调开发
-- API / worker 会连接 `localhost` 上映射出来的 PostgreSQL、OpenSearch、MinIO、Temporal
-- `SEARCH_BACKEND` 支持 `memory` 和 `opensearch` 两档，按环境显式切换
+- API / worker 会连接 `localhost` 上映射出来的 PostgreSQL、OpenSearch、Milvus、MinIO、Temporal
+- `SEARCH_BACKEND` 支持 `memory`、`opensearch`、`milvus` 和 `hybrid`，按环境显式切换
 - 要启用原始上传文件持久化，需要设置 `OBJECT_STORAGE_BACKEND=minio`
 
 ### Docker 环境
 
-- Compose 默认只启动 PostgreSQL + OpenSearch + MinIO + Temporal 等中间件
+- Compose 默认只启动 PostgreSQL + OpenSearch + Milvus + MinIO + Temporal 等中间件
 - `api`、`worker`、`web` 建议在宿主机运行做本地联调
 - `backend` 与 `web` 的 Dockerfile 仍保留，便于后续生产部署继续走镜像方式
 

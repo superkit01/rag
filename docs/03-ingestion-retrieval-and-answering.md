@@ -103,6 +103,14 @@
 
 当启用真实 embeddings 后，语义 rerank 的稳定性通常会比 `hash` 模式更好。
 
+### Milvus Vector
+
+Milvus 不生成 embedding。导入阶段仍由 embedding provider 生成 chunk embedding，并写入 PostgreSQL 的 `chunks.embedding`；当 `SEARCH_BACKEND=milvus` 或 `SEARCH_BACKEND=hybrid` 时，同一份向量会写入 Milvus collection。
+
+- `SEARCH_BACKEND=milvus`：Milvus 负责向量召回，词法召回默认关闭。
+- `SEARCH_BACKEND=hybrid`：OpenSearch 负责词法召回，Milvus 负责向量召回，应用层按 `chunk_id` 合并并融合排序。
+- PostgreSQL 继续作为主数据源；Milvus 只承担向量检索索引职责。
+
 ## 5. 问答生成策略
 
 问答入口是 `POST /api/queries/answer`。

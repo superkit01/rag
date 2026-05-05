@@ -8,7 +8,7 @@
 flowchart LR
     U["Web Console (Next.js)"] --> API["API Layer (FastAPI)"]
     API --> DB["PostgreSQL / SQLite fallback"]
-    API --> IDX["Hybrid Retrieval (OpenSearch adapter / memory fallback)"]
+    API --> IDX["Hybrid Retrieval (memory / OpenSearch / Milvus / OpenSearch+Milvus)"]
     API --> OBJ["S3 / MinIO"]
     API --> WF["Workflow Orchestrator (Temporal-ready)"]
     API --> LLM["LLM Provider Adapter (OpenAI-compatible or heuristic fallback)"]
@@ -18,9 +18,9 @@ flowchart LR
 
 - `backend/`：FastAPI API、SQLAlchemy 数据模型、文档导入/切块/索引/问答/评测服务。
 - `web/`：Next.js 最小化运营与问答界面。
-- `docker-compose.yml`：本地依赖栈，包括 PostgreSQL、Redis、OpenSearch、MinIO、Temporal。
+- `docker-compose.yml`：本地依赖栈，包括 PostgreSQL、Redis、OpenSearch、Milvus、MinIO、Temporal。
 - 轻量本地模式使用 `SQLite + in-memory search + immediate workflow + heuristic answer provider`，便于无外部依赖时跑通。
-- 生产目标配置仍然围绕 `PostgreSQL + OpenSearch + MinIO + Temporal + OpenAI-compatible provider`。
+- 生产目标配置仍然围绕 `PostgreSQL + OpenSearch/Milvus + MinIO + Temporal + OpenAI-compatible provider`。
 - embedding provider 支持 `hash` 与 `openai` 两档，可通过 `EMBEDDING_BACKEND` 切换。
 
 ## 详细文档
@@ -84,33 +84,34 @@ flowchart LR
 ## Docker Compose
 
 ```bash
-docker compose up -d postgres redis opensearch minio temporal temporal-ui
+docker compose up -d postgres redis opensearch milvus minio temporal temporal-ui
 ```
 
 - `infra/postgres/init/01-create-temporal-db.sql` 会在首次初始化 PostgreSQL 数据卷时创建 `temporal` 数据库。
 - 当前 Dockerfile 和 Compose 已默认改用国内更友好的镜像前缀，减少 Docker Hub 拉取失败的问题。
-- 当前 Compose 只负责中间件：`postgres`、`redis`、`opensearch`、`minio`、`temporal`、`temporal-ui`。
+- 当前 Compose 只负责中间件：`postgres`、`redis`、`opensearch`、`milvus`、`minio`、`temporal`、`temporal-ui`。
 - `api`、`worker`、`web` 默认建议直接在宿主机运行；`backend` 和 `web` 的 Dockerfile 继续保留，方便后续生产部署。
 
 ## 宿主机运行 API / Worker / Web，容器运行中间件
 
-如果你希望只把 PostgreSQL、Redis、OpenSearch、MinIO、Temporal 放在容器里，而把 `api`、`worker`、`web` 直接跑在宿主机，可以使用下面这套命令。
+如果你希望只把 PostgreSQL、Redis、OpenSearch、Milvus、MinIO、Temporal 放在容器里，而把 `api`、`worker`、`web` 直接跑在宿主机，可以使用下面这套命令。
 
 1. 先启动中间件容器：
 
    ```bash
-   docker compose up -d postgres redis opensearch minio temporal temporal-ui
+   docker compose up -d postgres redis opensearch milvus minio temporal temporal-ui
    ```
 
 2. 在宿主机启动 API：
 
    ```bash
    cd backend
-   export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch
+   export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch | milvus | hybrid
    DATABASE_URL=postgresql+psycopg://rag:rag@localhost:5432/rag \
    WORKFLOW_BACKEND=temporal \
    SEARCH_BACKEND=$SEARCH_BACKEND \
    OPENSEARCH_URL=http://localhost:9200 \
+   MILVUS_URI=http://localhost:19530 \
    OBJECT_STORAGE_BACKEND=minio \
    OBJECT_STORAGE_ENDPOINT=http://localhost:9000 \
    OBJECT_STORAGE_BUCKET=rag-documents \
@@ -126,11 +127,12 @@ docker compose up -d postgres redis opensearch minio temporal temporal-ui
 
    ```bash
    cd backend
-   export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch
+   export SEARCH_BACKEND=${SEARCH_BACKEND:-memory}   # 可选: memory | opensearch | milvus | hybrid
    DATABASE_URL=postgresql+psycopg://rag:rag@localhost:5432/rag \
    WORKFLOW_BACKEND=temporal \
    SEARCH_BACKEND=$SEARCH_BACKEND \
    OPENSEARCH_URL=http://localhost:9200 \
+   MILVUS_URI=http://localhost:19530 \
    OBJECT_STORAGE_BACKEND=minio \
    OBJECT_STORAGE_ENDPOINT=http://localhost:9000 \
    OBJECT_STORAGE_BUCKET=rag-documents \
@@ -153,9 +155,11 @@ docker compose up -d postgres redis opensearch minio temporal temporal-ui
 补充说明：
 
 - 这种模式下，浏览器上传的原始文件会持久化到 MinIO，所以宿主机运行 `api` 和 `worker` 时要显式设置 `OBJECT_STORAGE_BACKEND=minio`。
-- `SEARCH_BACKEND` 现在兼容 `memory` 和 `opensearch`：
-  - `SEARCH_BACKEND=memory`：不依赖 OpenSearch，适合轻量开发
-  - `SEARCH_BACKEND=opensearch`：连接 `http://localhost:9200`，更接近正式环境
+- `SEARCH_BACKEND` 现在兼容 `memory`、`opensearch`、`milvus` 和 `hybrid`：
+  - `SEARCH_BACKEND=memory`：不依赖外部检索服务，适合轻量开发
+  - `SEARCH_BACKEND=opensearch`：OpenSearch 词法召回，并使用命中片段 embedding 做本地 rerank
+  - `SEARCH_BACKEND=milvus`：Milvus 向量召回
+  - `SEARCH_BACKEND=hybrid`：OpenSearch 词法召回 + Milvus 向量召回，再由应用层融合排序
 - 如果 `.env` 已经写好了这些变量，也可以先执行 `set -a && source .env && set +a`，再运行上面的命令。
 - 常用访问地址：
   - API Docs: `http://localhost:8000/docs`
@@ -199,7 +203,7 @@ docker compose up -d postgres redis opensearch minio temporal temporal-ui
   - `parent-child` 会同时生成 `parent` 和 `child` chunks；系统只对 `child` 生成 embedding 并写入搜索索引，回答时再批量加载对应 `parent` 内容作为生成上下文和引用来源。
   - `semantic` 使用滑动窗口 embedding 相似度寻找语义边界，输出普通可检索 chunks；它会在导入和重建索引阶段额外调用 embedding provider，`EMBEDDING_BACKEND=openai` 时会增加模型调用成本。语义边界判断使用 `SEMANTIC_EMBEDDING_MODEL`，最终 chunk 入库和检索向量仍使用 `OPENAI_EMBEDDING_MODEL`。
   - 可通过 `PARENT_CHUNK_SIZE`、`PARENT_CHUNK_OVERLAP`、`CHILD_CHUNK_SIZE`、`CHILD_CHUNK_OVERLAP` 调整父子切块粒度；可通过 `SEMANTIC_CHUNK_MAX_SIZE`、`SEMANTIC_SIMILARITY_THRESHOLD`、`SLIDING_WINDOW_SIZE`、`SLIDING_OVERLAP_RATIO` 调整语义切块粒度。切换策略后，建议对历史文档执行重建索引。
-- `SEARCH_BACKEND` 当前显式支持 `memory` 和 `opensearch` 两档；本机直接运行后端时默认仍使用 `memory`，需要时可切到 `opensearch`。
+- `SEARCH_BACKEND` 当前显式支持 `memory`、`opensearch`、`milvus` 和 `hybrid`；本机直接运行后端时默认仍使用 `memory`，需要时可切到 `opensearch`、`milvus` 或 `hybrid`。
 - 单元测试默认使用 `WORKFLOW_BACKEND=immediate` 保持轻量回归，而标准开发和 Docker 环境默认使用真实 Temporal 工作流调度。
 - 回答默认使用保守的启发式 grounded answerer；配置 `OPENAI_API_KEY` 后可切换到 OpenAI-compatible provider。
 - 当 `EMBEDDING_BACKEND=openai` 时，需要同时配置 `OPENAI_API_KEY`、`OPENAI_BASE_URL`、`OPENAI_EMBEDDING_MODEL`。
