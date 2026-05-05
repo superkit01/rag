@@ -47,6 +47,18 @@ class SearchResult:
     parent_id: str | None = None
 
 
+@dataclass(slots=True)
+class LexicalCandidate:
+    chunk: IndexedChunk
+    lexical_score: float
+
+
+@dataclass(slots=True)
+class VectorCandidate:
+    chunk: IndexedChunk
+    semantic_score: float
+
+
 class EmbeddingProvider(Protocol):
     def embed(self, text: str) -> list[float]:
         ...
@@ -97,6 +109,63 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     if left_norm == 0 or right_norm == 0:
         return 0.0
     return numerator / (left_norm * right_norm)
+
+
+class ResultFusion:
+    def merge(
+        self,
+        query: str,
+        lexical_candidates: list[LexicalCandidate],
+        vector_candidates: list[VectorCandidate],
+        top_k: int,
+    ) -> list[SearchResult]:
+        query_tokens = set(tokenize_text(query))
+        by_chunk_id: dict[str, dict[str, object]] = {}
+
+        for candidate in lexical_candidates:
+            entry = by_chunk_id.setdefault(
+                candidate.chunk.chunk_id,
+                {"chunk": candidate.chunk, "lexical_score": 0.0, "semantic_score": 0.0},
+            )
+            entry["lexical_score"] = max(float(entry["lexical_score"]), candidate.lexical_score)
+
+        for candidate in vector_candidates:
+            entry = by_chunk_id.setdefault(
+                candidate.chunk.chunk_id,
+                {"chunk": candidate.chunk, "lexical_score": 0.0, "semantic_score": 0.0},
+            )
+            entry["semantic_score"] = max(float(entry["semantic_score"]), candidate.semantic_score)
+
+        results: list[SearchResult] = []
+        for entry in by_chunk_id.values():
+            chunk = entry["chunk"]
+            assert isinstance(chunk, IndexedChunk)
+            lexical_score = round(float(entry["lexical_score"]), 4)
+            semantic_score = round(float(entry["semantic_score"]), 4)
+            heading_boost = 0.08 if query_tokens & set(tokenize_text(" ".join(chunk.heading_path))) else 0.0
+            combined = round((0.55 * lexical_score) + (0.45 * semantic_score) + heading_boost, 4)
+            if combined <= 0:
+                continue
+            results.append(
+                SearchResult(
+                    chunk_id=chunk.chunk_id,
+                    knowledge_space_id=chunk.knowledge_space_id,
+                    document_id=chunk.document_id,
+                    document_title=chunk.document_title,
+                    fragment_id=chunk.fragment_id,
+                    section_title=chunk.section_title,
+                    heading_path=chunk.heading_path,
+                    page_number=chunk.page_number,
+                    content=chunk.content,
+                    score=combined,
+                    lexical_score=lexical_score,
+                    semantic_score=semantic_score,
+                    chunk_type=chunk.chunk_type,
+                    parent_id=chunk.parent_id,
+                )
+            )
+        results.sort(key=lambda item: item.score, reverse=True)
+        return results[:top_k]
 
 
 class InMemorySearchBackend:
