@@ -1,4 +1,13 @@
-from app.services.indexing import IndexedChunk, LexicalCandidate, ResultFusion, VectorCandidate
+from app.services.indexing import (
+    HybridSearchBackend,
+    IndexedChunk,
+    LexicalCandidate,
+    MemoryLexicalRetriever,
+    MemoryVectorRetriever,
+    ResultFusion,
+    VectorCandidate,
+)
+from app.services.llm import HashEmbeddingProvider
 
 
 def make_chunk(chunk_id: str, content: str = "核心数据变更必须有回滚预案") -> IndexedChunk:
@@ -49,3 +58,18 @@ def test_fusion_supports_vector_only_results() -> None:
     assert results[0].chunk_id == "chunk-2"
     assert results[0].lexical_score == 0.0
     assert results[0].semantic_score == 0.72
+
+
+def test_hybrid_backend_combines_memory_lexical_and_vector_retrieval() -> None:
+    provider = HashEmbeddingProvider(dimensions=4)
+    lexical = MemoryLexicalRetriever()
+    vector = MemoryVectorRetriever(provider)
+    backend = HybridSearchBackend("memory-hybrid", lexical, vector, provider, ResultFusion())
+    backend.upsert_chunks([make_chunk("chunk-3")])
+
+    results = backend.search("核心数据回滚预案", "space-1", None, 5)
+
+    assert results
+    assert results[0].chunk_id == "chunk-3"
+    assert results[0].lexical_score > 0
+    assert results[0].semantic_score > 0

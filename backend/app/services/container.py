@@ -9,7 +9,7 @@ from app.core.config import Settings
 from app.services.answering import AnswerService
 from app.services.chunking_factory import ChunkingStrategyFactory
 from app.services.evaluation import EvaluationService
-from app.services.indexing import HybridSearchBackend, InMemorySearchBackend, MilvusVectorRetriever, OpenSearchSearchBackend
+from app.services.indexing import HybridSearchBackend, InMemorySearchBackend, MilvusVectorRetriever, NullLexicalRetriever, OpenSearchSearchBackend
 from app.services.ingestion import IngestionService
 from app.services.llm import build_answer_provider, build_embedding_provider, build_semantic_embedding_provider
 from app.services.object_storage import build_object_storage
@@ -77,6 +77,7 @@ def build_search_backend(
     if settings.search_backend == "milvus":
         return HybridSearchBackend(
             "milvus-vector",
+            NullLexicalRetriever(),
             MilvusVectorRetriever(
                 uri=settings.milvus_uri,
                 token=settings.milvus_token,
@@ -86,10 +87,12 @@ def build_search_backend(
                 index_type=settings.milvus_index_type,
                 dimensions=settings.embedding_dimensions,
             ),
+            embedding_provider,
         )
     if settings.search_backend == "hybrid":
         return HybridSearchBackend(
             "opensearch-milvus-hybrid",
+            NullLexicalRetriever(),
             MilvusVectorRetriever(
                 uri=settings.milvus_uri,
                 token=settings.milvus_token,
@@ -99,5 +102,6 @@ def build_search_backend(
                 index_type=settings.milvus_index_type,
                 dimensions=settings.embedding_dimensions,
             ),
+            embedding_provider,
         )
     raise ValueError("Unsupported SEARCH_BACKEND. Expected one of: memory, opensearch, milvus, hybrid.")
