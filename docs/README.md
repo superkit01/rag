@@ -12,6 +12,10 @@
 6. [`06-deployment-and-operations.md`](./06-deployment-and-operations.md)
 7. [`07-roadmap-and-acceptance.md`](./07-roadmap-and-acceptance.md)
 8. [`08-session-design-summary.md`](./08-session-design-summary.md)
+9. [`09-data-flow.md`](./09-data-flow.md)
+10. [`10-openai-model-call-stages.md`](./10-openai-model-call-stages.md)
+11. [`11-document-versioning-and-expiration.md`](./11-document-versioning-and-expiration.md)
+12. [`12-connector-framework.md`](./12-connector-framework.md)
 
 ## 文档说明
 
@@ -23,3 +27,7 @@
 - `06`：本地开发、Docker、环境变量、运维建议。
 - `07`：阶段性路线图、验收指标、下一步待办。
 - `08`：本次会话已经达成的设计决策摘要。
+- `09`：端到端数据流、导入、索引、问答、评测链路。
+- `10`：OpenAI-compatible embedding/chat 模型调用阶段、触发条件和配置项。
+- `11`：文档增量更新、版本切换、索引一致性和过期失效设计。
+- `12`：连接器体系、数据源同步、变化检测、ImportedSource 合同和落地路径。
