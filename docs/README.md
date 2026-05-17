@@ -16,6 +16,8 @@
 10. [`10-openai-model-call-stages.md`](./10-openai-model-call-stages.md)
 11. [`11-document-versioning-and-expiration.md`](./11-document-versioning-and-expiration.md)
 12. [`12-connector-framework.md`](./12-connector-framework.md)
+13. [`13-rag-development-timeline.md`](./13-rag-development-timeline.md)
+14. [`14-graphrag-and-agentic-rag.md`](./14-graphrag-and-agentic-rag.md)
 
 ## 文档说明
 
@@ -31,3 +33,5 @@
 - `10`：OpenAI-compatible embedding/chat 模型调用阶段、触发条件和配置项。
 - `11`：文档增量更新、版本切换、索引一致性和过期失效设计。
 - `12`：连接器体系、数据源同步、变化检测、ImportedSource 合同和落地路径。
+- `13`：RAG 发展时间线、架构演进、重难点问题和企业级 RAG 启发。
+- `14`：GraphRAG 与 Agentic RAG 的概念、架构实现、最佳实践和本项目落地路线。
